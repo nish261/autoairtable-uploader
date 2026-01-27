@@ -206,59 +206,67 @@ uploadBtn.addEventListener('click', async () => {
   console.log('Table:', currentTable);
 
   try {
-    let successCount = 0;
-    let failCount = 0;
-    let errors = [];
+    // Step 1: Upload all files to temporary hosting first
+    const uploadedFiles = [];
+    const errors = [];
 
     for (let i = 0; i < selectedFiles.length; i++) {
       const file = selectedFiles[i];
-      console.log(`\n--- Processing file ${i + 1}/${selectedFiles.length}: ${file.name} ---`);
+      console.log(`\n--- Uploading file ${i + 1}/${selectedFiles.length}: ${file.name} ---`);
       updateProgress(i + 1, selectedFiles.length, `Uploading ${file.name}...`);
 
       try {
-        // Upload file to temporary hosting
-        console.log('Uploading to file.io...');
         const fileUrl = await uploadToTempHost(file);
 
         if (!fileUrl) {
           console.error(`❌ Failed to get URL for ${file.name}`);
-          failCount++;
-          errors.push(`${file.name}: Failed to upload to file.io`);
+          errors.push(`${file.name}: Failed to upload to hosting`);
           continue;
         }
 
-        console.log('✓ File.io URL:', fileUrl);
-
-        // Create new record in Airtable
-        console.log('Creating Airtable record...');
-        const result = await createAirtableRecord(file.name, fileUrl);
-        console.log('✓ Airtable record created:', result.id);
-
-        successCount++;
+        console.log('✓ URL:', fileUrl);
+        uploadedFiles.push({
+          url: fileUrl,
+          filename: file.name
+        });
 
       } catch (error) {
-        console.error(`❌ Error processing ${file.name}:`, error);
-        failCount++;
+        console.error(`❌ Error uploading ${file.name}:`, error);
         errors.push(`${file.name}: ${error.message}`);
       }
 
       // Small delay to avoid rate limiting
-      await sleep(500);
+      await sleep(300);
     }
 
-    updateProgress(selectedFiles.length, selectedFiles.length, 'Complete!');
+    // Step 2: Create ONE record with ALL attachments
+    if (uploadedFiles.length > 0) {
+      console.log('\n--- Creating Airtable record with all files ---');
+      updateProgress(selectedFiles.length, selectedFiles.length, 'Creating record...');
+
+      try {
+        const result = await createAirtableRecord(uploadedFiles);
+        console.log('✓ Airtable record created:', result.id);
+        console.log('✓ All files attached to one record!');
+
+        if (errors.length > 0) {
+          showStatus(`⚠️ Done! ${uploadedFiles.length} files uploaded to 1 record, ${errors.length} failed.`, 'error');
+        } else {
+          showStatus(`✓ Done! ${uploadedFiles.length} files uploaded to 1 record!`, 'success');
+        }
+      } catch (error) {
+        console.error('❌ Error creating Airtable record:', error);
+        showStatus(`Error creating record: ${error.message}`, 'error');
+      }
+    } else {
+      showStatus('❌ All file uploads failed. Check console for details.', 'error');
+    }
 
     console.log('\n=== UPLOAD COMPLETE ===');
-    console.log('Success:', successCount);
-    console.log('Failed:', failCount);
+    console.log('Files uploaded:', uploadedFiles.length);
+    console.log('Files failed:', errors.length);
     if (errors.length > 0) {
       console.log('Errors:', errors);
-    }
-
-    if (failCount > 0) {
-      showStatus(`⚠️ Done! ${successCount} uploaded, ${failCount} failed. Check console (F12) for errors.`, 'error');
-    } else {
-      showStatus(`✓ Done! ${successCount} files uploaded successfully!`, 'success');
     }
 
     // Clear file selection
@@ -361,24 +369,20 @@ async function uploadToTempHost(file) {
   throw new Error('Failed to upload file to any hosting service');
 }
 
-// Create new Airtable record with attachment (direct with host_permissions)
-async function createAirtableRecord(fileName, fileUrl) {
+// Create new Airtable record with ALL attachments in one record
+async function createAirtableRecord(filesArray) {
   const url = `https://api.airtable.com/v0/${currentBase}/${encodeURIComponent(currentTable)}`;
 
   const payload = {
     fields: {
-      "Money Video": [
-        {
-          url: fileUrl,
-          filename: fileName
-        }
-      ],
+      "Money Video": filesArray,  // Array of {url, filename} objects
       "Status": "Todo"
     }
   };
 
   console.log('Creating Airtable record...');
   console.log('URL:', url);
+  console.log(`Attaching ${filesArray.length} files to one record`);
   console.log('Payload:', JSON.stringify(payload, null, 2));
 
   const response = await fetch(url, {
