@@ -280,60 +280,85 @@ uploadBtn.addEventListener('click', async () => {
 
 // Upload file to temporary hosting (direct approach with host_permissions)
 async function uploadToTempHost(file) {
-  const formData = new FormData();
-  formData.append('file', file);
+  console.log('Starting upload, size:', file.size, 'bytes');
 
-  console.log('Uploading to tmpfiles.org, size:', file.size, 'bytes');
-
+  // Try catbox.moe first (most reliable)
   try {
-    // Try tmpfiles.org first
-    const response = await fetch('https://tmpfiles.org/api/v1/upload', {
+    console.log('Trying catbox.moe...');
+    const formData = new FormData();
+    formData.append('reqtype', 'fileupload');
+    formData.append('fileToUpload', file);
+
+    const response = await fetch('https://catbox.moe/user/api.php', {
       method: 'POST',
       body: formData
     });
 
-    console.log('tmpfiles.org response status:', response.status);
+    console.log('catbox.moe response status:', response.status);
+
+    if (response.ok) {
+      const url = await response.text();
+      console.log('✓ catbox.moe URL:', url.trim());
+      if (url && url.startsWith('https://')) {
+        return url.trim();
+      }
+    }
+  } catch (error) {
+    console.error('catbox.moe error:', error);
+  }
+
+  // Try uguu.se as second option
+  try {
+    console.log('Trying uguu.se...');
+    const formData = new FormData();
+    formData.append('files[]', file);
+
+    const response = await fetch('https://uguu.se/upload', {
+      method: 'POST',
+      body: formData
+    });
+
+    console.log('uguu.se response status:', response.status);
 
     if (response.ok) {
       const data = await response.json();
-      console.log('tmpfiles.org response:', data);
+      console.log('uguu.se response:', data);
 
-      if (data.status === 'success' && data.data && data.data.url) {
-        // Convert to direct download URL
-        const directUrl = data.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
-        console.log('✓ tmpfiles.org URL:', directUrl);
-        return directUrl;
+      if (data.success && data.files && data.files[0] && data.files[0].url) {
+        const url = data.files[0].url;
+        console.log('✓ uguu.se URL:', url);
+        return url;
       }
     }
-
-    throw new Error('tmpfiles.org upload failed');
-
   } catch (error) {
-    console.error('tmpfiles.org error:', error);
-    console.log('Trying 0x0.st as fallback...');
+    console.error('uguu.se error:', error);
+  }
 
-    try {
-      // Fallback to 0x0.st (simple file host)
-      const response = await fetch('https://0x0.st', {
-        method: 'POST',
-        body: formData
-      });
+  // Try 0x0.st as final fallback
+  try {
+    console.log('Trying 0x0.st...');
+    const formData = new FormData();
+    formData.append('file', file);
 
-      console.log('0x0.st response status:', response.status);
+    const response = await fetch('https://0x0.st', {
+      method: 'POST',
+      body: formData
+    });
 
-      if (response.ok) {
-        const url = await response.text();
-        console.log('✓ 0x0.st URL:', url.trim());
+    console.log('0x0.st response status:', response.status);
+
+    if (response.ok) {
+      const url = await response.text();
+      console.log('✓ 0x0.st URL:', url.trim());
+      if (url && url.startsWith('https://')) {
         return url.trim();
       }
-
-      throw new Error('0x0.st upload failed');
-
-    } catch (fallbackError) {
-      console.error('All upload services failed:', fallbackError);
-      throw new Error('Failed to upload file to any hosting service');
     }
+  } catch (error) {
+    console.error('0x0.st error:', error);
   }
+
+  throw new Error('Failed to upload file to any hosting service');
 }
 
 // Create new Airtable record with attachment (direct with host_permissions)
