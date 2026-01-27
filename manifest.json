@@ -4,10 +4,16 @@
   "version": "1.0.0",
   "description": "Bulk upload videos to Airtable and automatically match to records",
   "permissions": [
-    "storage",
-    "activeTab",
-    "tabs"
+    "storage"
   ],
+  "host_permissions": [
+    "https://file.io/*",
+    "https://tmpfiles.org/*",
+    "https://api.airtable.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

@@ -278,80 +278,75 @@ uploadBtn.addEventListener('click', async () => {
   }
 });
 
-// Upload file to temporary hosting (file.io)
+// Upload file to temporary hosting (via background script)
 async function uploadToTempHost(file) {
-  const formData = new FormData();
-  formData.append('file', file);
-
   try {
-    console.log('Uploading to file.io, size:', file.size, 'bytes');
+    console.log('Uploading to temp host, size:', file.size, 'bytes');
 
-    const response = await fetch('https://file.io/?expires=1d', {
-      method: 'POST',
-      body: formData
+    // Convert file to base64
+    const fileData = await fileToBase64(file);
+
+    // Send to background script
+    const response = await chrome.runtime.sendMessage({
+      action: 'uploadFile',
+      data: {
+        fileData: fileData,
+        fileName: file.name,
+        fileType: file.type
+      }
     });
 
-    console.log('File.io response status:', response.status);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('File.io error response:', errorText);
-      throw new Error(`File upload failed: ${response.status}`);
+    if (!response.success) {
+      throw new Error(response.error);
     }
 
-    const data = await response.json();
-    console.log('File.io response data:', data);
+    console.log('✓ File uploaded, URL:', response.data);
+    return response.data;
 
-    if (data.success && data.link) {
-      return data.link;
-    }
-
-    throw new Error(`No URL returned from file.io: ${JSON.stringify(data)}`);
   } catch (error) {
     console.error('uploadToTempHost error:', error);
     throw error;
   }
 }
 
-// Create new Airtable record with attachment
-async function createAirtableRecord(fileName, fileUrl) {
-  const url = `https://api.airtable.com/v0/${currentBase}/${encodeURIComponent(currentTable)}`;
-
-  const payload = {
-    fields: {
-      "Money Video": [
-        {
-          url: fileUrl,
-          filename: fileName
-        }
-      ],
-      "Status": "Todo"
-    }
-  };
-
-  console.log('Airtable API URL:', url);
-  console.log('Airtable payload:', JSON.stringify(payload, null, 2));
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
+// Convert file to base64
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
+}
 
-  console.log('Airtable response status:', response.status);
+// Create new Airtable record with attachment (via background script)
+async function createAirtableRecord(fileName, fileUrl) {
+  try {
+    console.log('Creating Airtable record...');
 
-  if (!response.ok) {
-    const errorData = await response.json();
-    console.error('Airtable error response:', errorData);
-    throw new Error(`Airtable error: ${errorData.error?.message || response.statusText}`);
+    // Send to background script
+    const response = await chrome.runtime.sendMessage({
+      action: 'createRecord',
+      data: {
+        apiKey: apiKey,
+        baseId: currentBase,
+        tableId: currentTable,
+        fileName: fileName,
+        fileUrl: fileUrl
+      }
+    });
+
+    if (!response.success) {
+      throw new Error(response.error);
+    }
+
+    console.log('✓ Airtable record created:', response.data.id);
+    return response.data;
+
+  } catch (error) {
+    console.error('createAirtableRecord error:', error);
+    throw error;
   }
-
-  const result = await response.json();
-  console.log('Airtable success response:', result);
-  return result;
 }
 
 // Helper functions
