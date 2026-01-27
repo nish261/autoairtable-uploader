@@ -62,17 +62,26 @@ Bulk upload videos and images to Airtable with smart folder grouping. Automatica
 
 ### How It Works
 
-The extension **creates 1 record per subfolder**:
+The extension uses **smart grouping** based on selection method:
+- **Folder selection**: Groups by subfolder → **1 record per subfolder**
+- **File selection**: Each file separate → **1 record per file**
+
+Examples:
 - Master folder with 2 subfolders → **2 records created**
+- Select 3 individual files → **3 records created**
 - Each subfolder's files become attachments in that record
-- Individual files (no folder structure) → **1 record with all files**
 
 ### Option 1: Upload Individual Files
 
 1. Click "📁 Select Files"
 2. Use Cmd/Ctrl+Click to select multiple files from anywhere
 3. Click "Upload All Files & Create Record"
-4. **Result**: 1 record with all selected files
+4. **Result**: Each file creates its own record
+
+**Example**: Select `image1.png`, `image2.png`, `video.mp4`
+- Record 1: image1.png
+- Record 2: image2.png
+- Record 3: video.mp4
 
 ### Option 2: Upload Folders (Smart Grouping)
 
@@ -93,6 +102,10 @@ master-folder/
 ### Mix & Match
 
 You can click "Select Files" and "Select Folder" multiple times before uploading - files accumulate until you click upload!
+
+**Note**: When you mix file and folder selections, the system will:
+- Create 1 record per individually selected file
+- Create 1 record per subfolder from folder selections
 
 **The extension:**
 - Filters to only videos & images
