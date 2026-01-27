@@ -262,15 +262,22 @@
     <div class="section-title">Upload Videos</div>
 
     <div class="info-box">
-      📌 Cmd+Click (Mac) or Ctrl+Click (Win) to select multiple folders at once!
+      📌 Mix & match files and folders - all go into 1 record!
+    </div>
+
+    <div class="file-input-wrapper">
+      <input type="file" id="fileInput" accept="video/*,image/*" multiple>
+      <label for="fileInput" class="file-input-label">
+        📁 Select Files<br>
+        <span style="font-size: 12px; color: #9ca3af; margin-top: 4px; display: inline-block;">Pick individual files from anywhere - Cmd/Ctrl+Click for multiple</span>
+      </label>
     </div>
 
     <div class="file-input-wrapper">
       <input type="file" id="folderInput" webkitdirectory directory multiple>
-      <label for="folderInput" class="file-input-label" style="padding: 32px 16px;">
-        📂 Select Folders<br>
-        <span style="font-size: 13px; color: #18bfff; margin-top: 8px; display: inline-block; font-weight: 600;">Hold Cmd/Ctrl + Click to select multiple folders!</span><br>
-        <span style="font-size: 11px; color: #9ca3af; margin-top: 4px; display: inline-block;">All files from all folders go into 1 record</span>
+      <label for="folderInput" class="file-input-label">
+        📂 Select Folder<br>
+        <span style="font-size: 12px; color: #9ca3af; margin-top: 4px; display: inline-block;">Pick entire folder with all contents</span>
       </label>
     </div>
 

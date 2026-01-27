@@ -14,6 +14,7 @@ const baseIdInput = document.getElementById('baseIdInput');
 const tableIdInput = document.getElementById('tableIdInput');
 const setTableBtn = document.getElementById('setTableBtn');
 const uploadSection = document.getElementById('uploadSection');
+const fileInput = document.getElementById('fileInput');
 const folderInput = document.getElementById('folderInput');
 const fileList = document.getElementById('fileList');
 const uploadBtn = document.getElementById('uploadBtn');
@@ -123,36 +124,100 @@ setTableBtn.addEventListener('click', () => {
   });
 });
 
-// Folder selection - supports multiple folders with Cmd/Ctrl+Click
-folderInput.addEventListener('change', (e) => {
-  selectedFiles = Array.from(e.target.files);
+// File selection - select individual files from anywhere
+fileInput.addEventListener('change', (e) => {
+  const newFiles = Array.from(e.target.files);
 
   // Filter for videos and images only
-  selectedFiles = selectedFiles.filter(file => {
+  const validFiles = newFiles.filter(file => {
     return file.type.startsWith('video/') || file.type.startsWith('image/');
   });
 
-  if (selectedFiles.length === 0) {
+  if (validFiles.length === 0) {
     showStatus('No valid video/image files found', 'error');
     return;
   }
 
+  // ADD to existing selection
+  selectedFiles = [...selectedFiles, ...validFiles];
+
+  // Remove duplicates by full path
+  const uniqueFiles = [];
+  const seen = new Set();
+  for (const file of selectedFiles) {
+    const key = `${file.name}-${file.size}-${file.lastModified}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueFiles.push(file);
+    }
+  }
+  selectedFiles = uniqueFiles;
+
   // Limit to 100 files
   if (selectedFiles.length > 100) {
     selectedFiles = selectedFiles.slice(0, 100);
-    showStatus('⚠️ Limited to 100 files', 'info');
+    showStatus('⚠️ Limited to 100 files total', 'info');
   } else {
-    showStatus(`✓ Selected ${selectedFiles.length} files!`, 'success');
+    showStatus(`✓ Added ${validFiles.length} files (${selectedFiles.length} total)`, 'success');
   }
 
   displayFileList();
   uploadBtn.disabled = selectedFiles.length === 0;
   clearBtn.style.display = selectedFiles.length > 0 ? 'block' : 'none';
+
+  // Reset input so you can select more
+  fileInput.value = '';
+});
+
+// Folder selection - select entire folder contents
+folderInput.addEventListener('change', (e) => {
+  const newFiles = Array.from(e.target.files);
+
+  // Filter for videos and images only
+  const validFiles = newFiles.filter(file => {
+    return file.type.startsWith('video/') || file.type.startsWith('image/');
+  });
+
+  if (validFiles.length === 0) {
+    showStatus('No valid video/image files found in folder', 'error');
+    return;
+  }
+
+  // ADD to existing selection
+  selectedFiles = [...selectedFiles, ...validFiles];
+
+  // Remove duplicates by full path
+  const uniqueFiles = [];
+  const seen = new Set();
+  for (const file of selectedFiles) {
+    const key = `${file.name}-${file.size}-${file.lastModified}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueFiles.push(file);
+    }
+  }
+  selectedFiles = uniqueFiles;
+
+  // Limit to 100 files
+  if (selectedFiles.length > 100) {
+    selectedFiles = selectedFiles.slice(0, 100);
+    showStatus('⚠️ Limited to 100 files total', 'info');
+  } else {
+    showStatus(`✓ Added ${validFiles.length} files from folder (${selectedFiles.length} total)`, 'success');
+  }
+
+  displayFileList();
+  uploadBtn.disabled = selectedFiles.length === 0;
+  clearBtn.style.display = selectedFiles.length > 0 ? 'block' : 'none';
+
+  // Reset input so you can select more folders
+  folderInput.value = '';
 });
 
 // Clear all files
 clearBtn.addEventListener('click', () => {
   selectedFiles = [];
+  fileInput.value = '';
   folderInput.value = '';
   displayFileList();
   uploadBtn.disabled = true;
@@ -261,6 +326,7 @@ uploadBtn.addEventListener('click', async () => {
 
     // Clear file selection
     selectedFiles = [];
+    fileInput.value = '';
     folderInput.value = '';
     displayFileList();
     clearBtn.style.display = 'none';
