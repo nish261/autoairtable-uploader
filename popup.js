@@ -18,6 +18,7 @@ const fileInput = document.getElementById('fileInput');
 const folderInput = document.getElementById('folderInput');
 const fileList = document.getElementById('fileList');
 const uploadBtn = document.getElementById('uploadBtn');
+const clearBtn = document.getElementById('clearBtn');
 const statusDiv = document.getElementById('status');
 const progressDiv = document.getElementById('progress');
 const progressFill = document.getElementById('progressFill');
@@ -123,52 +124,104 @@ setTableBtn.addEventListener('click', () => {
   });
 });
 
-// File selection
+// File selection - ADDS files instead of replacing
 fileInput.addEventListener('change', (e) => {
-  selectedFiles = Array.from(e.target.files);
+  const newFiles = Array.from(e.target.files);
 
   // Filter for videos and images only
-  selectedFiles = selectedFiles.filter(file => {
+  const validFiles = newFiles.filter(file => {
     return file.type.startsWith('video/') || file.type.startsWith('image/');
   });
 
-  if (selectedFiles.length === 0) {
+  if (validFiles.length === 0) {
     showStatus('No valid video/image files found', 'error');
     return;
   }
 
+  // ADD to existing selection
+  selectedFiles = [...selectedFiles, ...validFiles];
+
+  // Remove duplicates by filename
+  const uniqueFiles = [];
+  const seen = new Set();
+  for (const file of selectedFiles) {
+    if (!seen.has(file.name)) {
+      seen.add(file.name);
+      uniqueFiles.push(file);
+    }
+  }
+  selectedFiles = uniqueFiles;
+
   // Limit to 100 files
   if (selectedFiles.length > 100) {
     selectedFiles = selectedFiles.slice(0, 100);
-    showStatus('⚠️ Limited to 100 files', 'info');
+    showStatus('⚠️ Limited to 100 files total', 'info');
+  } else {
+    showStatus(`✓ Added ${validFiles.length} files (${selectedFiles.length} total)`, 'success');
   }
 
   displayFileList();
   uploadBtn.disabled = selectedFiles.length === 0;
+  clearBtn.style.display = selectedFiles.length > 0 ? 'block' : 'none';
+
+  // Reset input so you can select same folder again
+  fileInput.value = '';
 });
 
-// Folder selection
+// Folder selection - ADDS folder files instead of replacing
 folderInput.addEventListener('change', (e) => {
-  selectedFiles = Array.from(e.target.files);
+  const newFiles = Array.from(e.target.files);
 
   // Filter for videos and images only
-  selectedFiles = selectedFiles.filter(file => {
+  const validFiles = newFiles.filter(file => {
     return file.type.startsWith('video/') || file.type.startsWith('image/');
   });
 
-  if (selectedFiles.length === 0) {
+  if (validFiles.length === 0) {
     showStatus('No valid video/image files found in folder', 'error');
     return;
   }
 
+  // ADD to existing selection
+  selectedFiles = [...selectedFiles, ...validFiles];
+
+  // Remove duplicates by filename
+  const uniqueFiles = [];
+  const seen = new Set();
+  for (const file of selectedFiles) {
+    if (!seen.has(file.name)) {
+      seen.add(file.name);
+      uniqueFiles.push(file);
+    }
+  }
+  selectedFiles = uniqueFiles;
+
   // Limit to 100 files
   if (selectedFiles.length > 100) {
     selectedFiles = selectedFiles.slice(0, 100);
-    showStatus('⚠️ Limited to 100 files', 'info');
+    showStatus('⚠️ Limited to 100 files total', 'info');
+  } else {
+    showStatus(`✓ Added ${validFiles.length} files from folder (${selectedFiles.length} total)`, 'success');
   }
 
   displayFileList();
   uploadBtn.disabled = selectedFiles.length === 0;
+  clearBtn.style.display = selectedFiles.length > 0 ? 'block' : 'none';
+
+  // Reset input so you can select another folder
+  folderInput.value = '';
+});
+
+// Clear all files
+clearBtn.addEventListener('click', () => {
+  selectedFiles = [];
+  fileInput.value = '';
+  folderInput.value = '';
+  displayFileList();
+  uploadBtn.disabled = true;
+  clearBtn.style.display = 'none';
+  showStatus('✓ Files cleared', 'success');
+  setTimeout(() => statusDiv.style.display = 'none', 2000);
 });
 
 function displayFileList() {
@@ -274,6 +327,7 @@ uploadBtn.addEventListener('click', async () => {
     fileInput.value = '';
     folderInput.value = '';
     displayFileList();
+    clearBtn.style.display = 'none';
 
   } catch (error) {
     console.error('❌ Upload error:', error);
