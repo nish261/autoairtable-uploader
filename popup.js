@@ -278,75 +278,104 @@ uploadBtn.addEventListener('click', async () => {
   }
 });
 
-// Upload file to temporary hosting (via background script)
+// Upload file to temporary hosting (direct approach with host_permissions)
 async function uploadToTempHost(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  console.log('Uploading to tmpfiles.org, size:', file.size, 'bytes');
+
   try {
-    console.log('Uploading to temp host, size:', file.size, 'bytes');
-
-    // Convert file to base64
-    const fileData = await fileToBase64(file);
-
-    // Send to background script
-    const response = await chrome.runtime.sendMessage({
-      action: 'uploadFile',
-      data: {
-        fileData: fileData,
-        fileName: file.name,
-        fileType: file.type
-      }
+    // Try tmpfiles.org first
+    const response = await fetch('https://tmpfiles.org/api/v1/upload', {
+      method: 'POST',
+      body: formData
     });
 
-    if (!response.success) {
-      throw new Error(response.error);
+    console.log('tmpfiles.org response status:', response.status);
+
+    if (response.ok) {
+      const data = await response.json();
+      console.log('tmpfiles.org response:', data);
+
+      if (data.status === 'success' && data.data && data.data.url) {
+        // Convert to direct download URL
+        const directUrl = data.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+        console.log('✓ tmpfiles.org URL:', directUrl);
+        return directUrl;
+      }
     }
 
-    console.log('✓ File uploaded, URL:', response.data);
-    return response.data;
+    throw new Error('tmpfiles.org upload failed');
 
   } catch (error) {
-    console.error('uploadToTempHost error:', error);
-    throw error;
+    console.error('tmpfiles.org error:', error);
+    console.log('Trying 0x0.st as fallback...');
+
+    try {
+      // Fallback to 0x0.st (simple file host)
+      const response = await fetch('https://0x0.st', {
+        method: 'POST',
+        body: formData
+      });
+
+      console.log('0x0.st response status:', response.status);
+
+      if (response.ok) {
+        const url = await response.text();
+        console.log('✓ 0x0.st URL:', url.trim());
+        return url.trim();
+      }
+
+      throw new Error('0x0.st upload failed');
+
+    } catch (fallbackError) {
+      console.error('All upload services failed:', fallbackError);
+      throw new Error('Failed to upload file to any hosting service');
+    }
   }
 }
 
-// Convert file to base64
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-// Create new Airtable record with attachment (via background script)
+// Create new Airtable record with attachment (direct with host_permissions)
 async function createAirtableRecord(fileName, fileUrl) {
-  try {
-    console.log('Creating Airtable record...');
+  const url = `https://api.airtable.com/v0/${currentBase}/${encodeURIComponent(currentTable)}`;
 
-    // Send to background script
-    const response = await chrome.runtime.sendMessage({
-      action: 'createRecord',
-      data: {
-        apiKey: apiKey,
-        baseId: currentBase,
-        tableId: currentTable,
-        fileName: fileName,
-        fileUrl: fileUrl
-      }
-    });
-
-    if (!response.success) {
-      throw new Error(response.error);
+  const payload = {
+    fields: {
+      "Money Video": [
+        {
+          url: fileUrl,
+          filename: fileName
+        }
+      ],
+      "Status": "Todo"
     }
+  };
 
-    console.log('✓ Airtable record created:', response.data.id);
-    return response.data;
+  console.log('Creating Airtable record...');
+  console.log('URL:', url);
+  console.log('Payload:', JSON.stringify(payload, null, 2));
 
-  } catch (error) {
-    console.error('createAirtableRecord error:', error);
-    throw error;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  console.log('Airtable response status:', response.status);
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    console.error('Airtable error:', errorData);
+    throw new Error(`Airtable error: ${errorData.error?.message || response.statusText}`);
   }
+
+  const result = await response.json();
+  console.log('✓ Airtable record created:', result.id);
+  return result;
 }
 
 // Helper functions
