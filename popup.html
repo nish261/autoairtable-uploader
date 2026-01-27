@@ -262,29 +262,22 @@
     <div class="section-title">Upload Videos</div>
 
     <div class="info-box">
-      📌 All files go into 1 record | Keep adding folders/files | Up to 100 total
-    </div>
-
-    <div class="file-input-wrapper">
-      <input type="file" id="fileInput" accept="video/*,image/*" multiple>
-      <label for="fileInput" class="file-input-label">
-        📁 Add Files<br>
-        <span style="font-size: 12px; color: #9ca3af; margin-top: 4px; display: inline-block;">Videos & Images - Add more files</span>
-      </label>
+      📌 Cmd+Click (Mac) or Ctrl+Click (Win) to select multiple folders at once!
     </div>
 
     <div class="file-input-wrapper">
       <input type="file" id="folderInput" webkitdirectory directory multiple>
-      <label for="folderInput" class="file-input-label">
-        📂 Add Folder<br>
-        <span style="font-size: 12px; color: #9ca3af; margin-top: 4px; display: inline-block;">Add another folder - keeps adding files!</span>
+      <label for="folderInput" class="file-input-label" style="padding: 32px 16px;">
+        📂 Select Folders<br>
+        <span style="font-size: 13px; color: #18bfff; margin-top: 8px; display: inline-block; font-weight: 600;">Hold Cmd/Ctrl + Click to select multiple folders!</span><br>
+        <span style="font-size: 11px; color: #9ca3af; margin-top: 4px; display: inline-block;">All files from all folders go into 1 record</span>
       </label>
     </div>
 
     <div id="fileList" class="file-list"></div>
 
     <button class="secondary" id="clearBtn" style="display: none; margin-bottom: 8px;">
-      Clear All Files
+      Clear Selection
     </button>
 
     <button class="primary" id="uploadBtn" disabled>

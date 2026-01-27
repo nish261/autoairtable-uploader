@@ -14,7 +14,6 @@ const baseIdInput = document.getElementById('baseIdInput');
 const tableIdInput = document.getElementById('tableIdInput');
 const setTableBtn = document.getElementById('setTableBtn');
 const uploadSection = document.getElementById('uploadSection');
-const fileInput = document.getElementById('fileInput');
 const folderInput = document.getElementById('folderInput');
 const fileList = document.getElementById('fileList');
 const uploadBtn = document.getElementById('uploadBtn');
@@ -124,103 +123,41 @@ setTableBtn.addEventListener('click', () => {
   });
 });
 
-// File selection - ADDS files instead of replacing
-fileInput.addEventListener('change', (e) => {
-  const newFiles = Array.from(e.target.files);
+// Folder selection - supports multiple folders with Cmd/Ctrl+Click
+folderInput.addEventListener('change', (e) => {
+  selectedFiles = Array.from(e.target.files);
 
   // Filter for videos and images only
-  const validFiles = newFiles.filter(file => {
+  selectedFiles = selectedFiles.filter(file => {
     return file.type.startsWith('video/') || file.type.startsWith('image/');
   });
 
-  if (validFiles.length === 0) {
+  if (selectedFiles.length === 0) {
     showStatus('No valid video/image files found', 'error');
     return;
   }
 
-  // ADD to existing selection
-  selectedFiles = [...selectedFiles, ...validFiles];
-
-  // Remove duplicates by filename
-  const uniqueFiles = [];
-  const seen = new Set();
-  for (const file of selectedFiles) {
-    if (!seen.has(file.name)) {
-      seen.add(file.name);
-      uniqueFiles.push(file);
-    }
-  }
-  selectedFiles = uniqueFiles;
-
   // Limit to 100 files
   if (selectedFiles.length > 100) {
     selectedFiles = selectedFiles.slice(0, 100);
-    showStatus('⚠️ Limited to 100 files total', 'info');
+    showStatus('⚠️ Limited to 100 files', 'info');
   } else {
-    showStatus(`✓ Added ${validFiles.length} files (${selectedFiles.length} total)`, 'success');
+    showStatus(`✓ Selected ${selectedFiles.length} files!`, 'success');
   }
 
   displayFileList();
   uploadBtn.disabled = selectedFiles.length === 0;
   clearBtn.style.display = selectedFiles.length > 0 ? 'block' : 'none';
-
-  // Reset input so you can select same folder again
-  fileInput.value = '';
-});
-
-// Folder selection - ADDS folder files instead of replacing
-folderInput.addEventListener('change', (e) => {
-  const newFiles = Array.from(e.target.files);
-
-  // Filter for videos and images only
-  const validFiles = newFiles.filter(file => {
-    return file.type.startsWith('video/') || file.type.startsWith('image/');
-  });
-
-  if (validFiles.length === 0) {
-    showStatus('No valid video/image files found in folder', 'error');
-    return;
-  }
-
-  // ADD to existing selection
-  selectedFiles = [...selectedFiles, ...validFiles];
-
-  // Remove duplicates by filename
-  const uniqueFiles = [];
-  const seen = new Set();
-  for (const file of selectedFiles) {
-    if (!seen.has(file.name)) {
-      seen.add(file.name);
-      uniqueFiles.push(file);
-    }
-  }
-  selectedFiles = uniqueFiles;
-
-  // Limit to 100 files
-  if (selectedFiles.length > 100) {
-    selectedFiles = selectedFiles.slice(0, 100);
-    showStatus('⚠️ Limited to 100 files total', 'info');
-  } else {
-    showStatus(`✓ Added ${validFiles.length} files from folder (${selectedFiles.length} total)`, 'success');
-  }
-
-  displayFileList();
-  uploadBtn.disabled = selectedFiles.length === 0;
-  clearBtn.style.display = selectedFiles.length > 0 ? 'block' : 'none';
-
-  // Reset input so you can select another folder
-  folderInput.value = '';
 });
 
 // Clear all files
 clearBtn.addEventListener('click', () => {
   selectedFiles = [];
-  fileInput.value = '';
   folderInput.value = '';
   displayFileList();
   uploadBtn.disabled = true;
   clearBtn.style.display = 'none';
-  showStatus('✓ Files cleared', 'success');
+  showStatus('✓ Selection cleared', 'success');
   setTimeout(() => statusDiv.style.display = 'none', 2000);
 });
 
@@ -324,7 +261,6 @@ uploadBtn.addEventListener('click', async () => {
 
     // Clear file selection
     selectedFiles = [];
-    fileInput.value = '';
     folderInput.value = '';
     displayFileList();
     clearBtn.style.display = 'none';
