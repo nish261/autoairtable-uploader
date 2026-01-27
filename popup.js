@@ -261,67 +261,108 @@ uploadBtn.addEventListener('click', async () => {
   console.log('Table:', currentTable);
 
   try {
-    // Step 1: Upload all files to temporary hosting first
-    const uploadedFiles = [];
-    const errors = [];
+    // Step 1: Group files by their parent folder
+    const filesByFolder = new Map();
 
-    for (let i = 0; i < selectedFiles.length; i++) {
-      const file = selectedFiles[i];
-      console.log(`\n--- Uploading file ${i + 1}/${selectedFiles.length}: ${file.name} ---`);
-      updateProgress(i + 1, selectedFiles.length, `Uploading ${file.name}...`);
+    for (const file of selectedFiles) {
+      // Get the parent folder from webkitRelativePath (for folder selection) or use 'root' for file selection
+      let folderPath = 'root';
 
-      try {
-        const fileUrl = await uploadToTempHost(file);
-
-        if (!fileUrl) {
-          console.error(`❌ Failed to get URL for ${file.name}`);
-          errors.push(`${file.name}: Failed to upload to hosting`);
-          continue;
+      if (file.webkitRelativePath) {
+        // Extract parent folder path (everything except the filename)
+        const parts = file.webkitRelativePath.split('/');
+        if (parts.length > 1) {
+          parts.pop(); // Remove filename
+          folderPath = parts.join('/'); // Get parent folder path
         }
-
-        console.log('✓ URL:', fileUrl);
-        uploadedFiles.push({
-          url: fileUrl,
-          filename: file.name
-        });
-
-      } catch (error) {
-        console.error(`❌ Error uploading ${file.name}:`, error);
-        errors.push(`${file.name}: ${error.message}`);
       }
 
-      // Small delay to avoid rate limiting
-      await sleep(300);
+      if (!filesByFolder.has(folderPath)) {
+        filesByFolder.set(folderPath, []);
+      }
+      filesByFolder.get(folderPath).push(file);
     }
 
-    // Step 2: Create ONE record with ALL attachments
-    if (uploadedFiles.length > 0) {
-      console.log('\n--- Creating Airtable record with all files ---');
-      updateProgress(selectedFiles.length, selectedFiles.length, 'Creating record...');
+    console.log(`\n📁 Found ${filesByFolder.size} folder(s) to create records for:`);
+    for (const [folder, files] of filesByFolder) {
+      console.log(`  - ${folder}: ${files.length} files`);
+    }
 
-      try {
-        const result = await createAirtableRecord(uploadedFiles);
-        console.log('✓ Airtable record created:', result.id);
-        console.log('✓ All files attached to one record!');
+    // Step 2: Upload all files and group by folder
+    const uploadedByFolder = new Map();
+    const errors = [];
+    let uploadedCount = 0;
 
-        if (errors.length > 0) {
-          showStatus(`⚠️ Done! ${uploadedFiles.length} files uploaded to 1 record, ${errors.length} failed.`, 'error');
-        } else {
-          showStatus(`✓ Done! ${uploadedFiles.length} files uploaded to 1 record!`, 'success');
+    for (const [folderPath, files] of filesByFolder) {
+      uploadedByFolder.set(folderPath, []);
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        uploadedCount++;
+        console.log(`\n--- Uploading file ${uploadedCount}/${selectedFiles.length}: ${file.name} ---`);
+        updateProgress(uploadedCount, selectedFiles.length, `Uploading ${file.name}...`);
+
+        try {
+          const fileUrl = await uploadToTempHost(file);
+
+          if (!fileUrl) {
+            console.error(`❌ Failed to get URL for ${file.name}`);
+            errors.push(`${file.name}: Failed to upload to hosting`);
+            continue;
+          }
+
+          console.log('✓ URL:', fileUrl);
+          uploadedByFolder.get(folderPath).push({
+            url: fileUrl,
+            filename: file.name
+          });
+
+        } catch (error) {
+          console.error(`❌ Error uploading ${file.name}:`, error);
+          errors.push(`${file.name}: ${error.message}`);
         }
-      } catch (error) {
-        console.error('❌ Error creating Airtable record:', error);
-        showStatus(`Error creating record: ${error.message}`, 'error');
+
+        // Small delay to avoid rate limiting
+        await sleep(300);
       }
-    } else {
-      showStatus('❌ All file uploads failed. Check console for details.', 'error');
+    }
+
+    // Step 3: Create ONE record per folder
+    let recordsCreated = 0;
+
+    for (const [folderPath, uploadedFiles] of uploadedByFolder) {
+      if (uploadedFiles.length > 0) {
+        console.log(`\n--- Creating Airtable record for folder: ${folderPath} (${uploadedFiles.length} files) ---`);
+        updateProgress(selectedFiles.length, selectedFiles.length, `Creating record for ${folderPath}...`);
+
+        try {
+          const result = await createAirtableRecord(uploadedFiles);
+          console.log(`✓ Airtable record created: ${result.id}`);
+          recordsCreated++;
+        } catch (error) {
+          console.error(`❌ Error creating record for ${folderPath}:`, error);
+          errors.push(`Folder ${folderPath}: ${error.message}`);
+        }
+
+        // Small delay between record creation
+        await sleep(300);
+      }
     }
 
     console.log('\n=== UPLOAD COMPLETE ===');
-    console.log('Files uploaded:', uploadedFiles.length);
+    console.log('Records created:', recordsCreated);
+    console.log('Files uploaded:', uploadedCount - errors.length);
     console.log('Files failed:', errors.length);
     if (errors.length > 0) {
       console.log('Errors:', errors);
+    }
+
+    if (recordsCreated === 0) {
+      showStatus('❌ All uploads failed. Check console for details.', 'error');
+    } else if (errors.length > 0) {
+      showStatus(`⚠️ Done! ${recordsCreated} records created, ${errors.length} files failed.`, 'error');
+    } else {
+      showStatus(`✓ Done! ${recordsCreated} records created with ${uploadedCount} files!`, 'success');
     }
 
     // Clear file selection
