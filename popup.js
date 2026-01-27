@@ -302,7 +302,7 @@ function displayFileList() {
   }
 }
 
-// Upload process - delegates to background worker so it continues even if popup closes
+// Upload process
 uploadBtn.addEventListener('click', async () => {
   if (selectedFiles.length === 0) {
     showStatus('Please select files first', 'error');
@@ -315,76 +315,135 @@ uploadBtn.addEventListener('click', async () => {
   }
 
   uploadBtn.disabled = true;
-  showStatus('Preparing files for upload...', 'info');
+  showStatus('⚠️ DO NOT CLOSE THIS POPUP - Upload in progress...', 'info');
   progressDiv.classList.add('active');
 
-  console.log('=== PREPARING UPLOAD ===');
+  console.log('=== STARTING UPLOAD ===');
   console.log('Files to upload:', selectedFiles.length);
   console.log('Base:', currentBase);
   console.log('Table:', currentTable);
 
   try {
-    // Convert files to data URLs so they can be sent to background worker
-    updateProgress(0, selectedFiles.length, 'Converting files...');
-    const filesData = [];
+    // Step 1: Group files by their parent folder
+    const filesByFolder = new Map();
 
-    for (let i = 0; i < selectedFiles.length; i++) {
-      const file = selectedFiles[i];
-      updateProgress(i + 1, selectedFiles.length, `Preparing ${file.name}...`);
+    for (const file of selectedFiles) {
+      let folderPath;
 
-      const dataUrl = await fileToDataUrl(file);
-      filesData.push({
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        lastModified: file.lastModified,
-        webkitRelativePath: file.webkitRelativePath || '',
-        dataUrl: dataUrl
-      });
+      if (file.webkitRelativePath) {
+        // FOLDER SELECTION: Extract parent folder path (everything except the filename)
+        // This groups files by subfolder -> 1 record per subfolder
+        const parts = file.webkitRelativePath.split('/');
+        if (parts.length > 1) {
+          parts.pop(); // Remove filename
+          folderPath = parts.join('/'); // Get parent folder path
+        } else {
+          folderPath = 'root';
+        }
+      } else {
+        // FILE SELECTION: Each file gets its own unique path -> 1 record per file
+        folderPath = `file_${file.name}_${file.size}_${file.lastModified}`;
+      }
+
+      if (!filesByFolder.has(folderPath)) {
+        filesByFolder.set(folderPath, []);
+      }
+      filesByFolder.get(folderPath).push(file);
     }
 
-    console.log('✓ Files prepared, sending to background worker');
-    showStatus('Upload started! You can close this popup - we\'ll notify you when done.', 'success');
+    console.log(`\n📁 Found ${filesByFolder.size} folder(s) to create records for:`);
+    for (const [folder, files] of filesByFolder) {
+      console.log(`  - ${folder}: ${files.length} files`);
+    }
 
-    // Send to background worker - this will continue even if popup closes
-    chrome.runtime.sendMessage({
-      action: 'startUpload',
-      data: {
-        files: filesData,
-        apiKey: apiKey,
-        baseId: currentBase,
-        tableId: currentTable
-      }
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error('Message error:', chrome.runtime.lastError);
-        showStatus('❌ Failed to start background upload', 'error');
-        uploadBtn.disabled = false;
-        return;
-      }
+    // Step 2: Upload all files and group by folder
+    const uploadedByFolder = new Map();
+    const errors = [];
+    let uploadedCount = 0;
 
-      if (response && response.success) {
-        console.log('✓ Background upload completed:', response.result);
-      } else {
-        console.error('Background upload failed:', response?.error);
-      }
-    });
+    for (const [folderPath, files] of filesByFolder) {
+      uploadedByFolder.set(folderPath, []);
 
-    // Clear file selection and reset UI
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        uploadedCount++;
+        console.log(`\n--- Uploading file ${uploadedCount}/${selectedFiles.length}: ${file.name} ---`);
+        updateProgress(uploadedCount, selectedFiles.length, `Uploading ${file.name}...`);
+
+        try {
+          const fileUrl = await uploadToTempHost(file);
+
+          if (!fileUrl) {
+            console.error(`❌ Failed to get URL for ${file.name}`);
+            errors.push(`${file.name}: Failed to upload to hosting`);
+            continue;
+          }
+
+          console.log('✓ URL:', fileUrl);
+          uploadedByFolder.get(folderPath).push({
+            url: fileUrl,
+            filename: file.name
+          });
+
+        } catch (error) {
+          console.error(`❌ Error uploading ${file.name}:`, error);
+          errors.push(`${file.name}: ${error.message}`);
+        }
+
+        // Small delay to avoid rate limiting
+        await sleep(300);
+      }
+    }
+
+    // Step 3: Create ONE record per folder
+    let recordsCreated = 0;
+
+    for (const [folderPath, uploadedFiles] of uploadedByFolder) {
+      if (uploadedFiles.length > 0) {
+        console.log(`\n--- Creating Airtable record for folder: ${folderPath} (${uploadedFiles.length} files) ---`);
+        updateProgress(selectedFiles.length, selectedFiles.length, `Creating record for ${folderPath}...`);
+
+        try {
+          const result = await createAirtableRecord(uploadedFiles);
+          console.log(`✓ Airtable record created: ${result.id}`);
+          recordsCreated++;
+        } catch (error) {
+          console.error(`❌ Error creating record for ${folderPath}:`, error);
+          errors.push(`Folder ${folderPath}: ${error.message}`);
+        }
+
+        // Small delay between record creation
+        await sleep(300);
+      }
+    }
+
+    console.log('\n=== UPLOAD COMPLETE ===');
+    console.log('Records created:', recordsCreated);
+    console.log('Files uploaded:', uploadedCount - errors.length);
+    console.log('Files failed:', errors.length);
+    if (errors.length > 0) {
+      console.log('Errors:', errors);
+    }
+
+    if (recordsCreated === 0) {
+      showStatus('❌ All uploads failed. Check console for details.', 'error');
+    } else if (errors.length > 0) {
+      showStatus(`⚠️ Done! ${recordsCreated} records created, ${errors.length} files failed.`, 'error');
+    } else {
+      showStatus(`✓ Done! ${recordsCreated} records created with ${uploadedCount} files!`, 'success');
+    }
+
+    // Clear file selection
     selectedFiles = [];
     fileInput.value = '';
     folderInput.value = '';
     displayFileList();
     clearBtn.style.display = 'none';
-    uploadBtn.disabled = false;
-
-    setTimeout(() => {
-      progressDiv.classList.remove('active');
-    }, 2000);
 
   } catch (error) {
-    console.error('❌ Upload preparation error:', error);
+    console.error('❌ Upload error:', error);
     showStatus(`Error: ${error.message}`, 'error');
+  } finally {
     uploadBtn.disabled = false;
     setTimeout(() => {
       progressDiv.classList.remove('active');
@@ -392,16 +451,126 @@ uploadBtn.addEventListener('click', async () => {
   }
 });
 
-// Helper: Convert File to data URL
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+// Upload file to temporary hosting (direct approach with host_permissions)
+async function uploadToTempHost(file) {
+  console.log('Starting upload, size:', file.size, 'bytes');
+
+  // Try catbox.moe first (most reliable)
+  try {
+    console.log('Trying catbox.moe...');
+    const formData = new FormData();
+    formData.append('reqtype', 'fileupload');
+    formData.append('fileToUpload', file);
+
+    const response = await fetch('https://catbox.moe/user/api.php', {
+      method: 'POST',
+      body: formData
+    });
+
+    console.log('catbox.moe response status:', response.status);
+
+    if (response.ok) {
+      const url = await response.text();
+      console.log('✓ catbox.moe URL:', url.trim());
+      if (url && url.startsWith('https://')) {
+        return url.trim();
+      }
+    }
+  } catch (error) {
+    console.error('catbox.moe error:', error);
+  }
+
+  // Try uguu.se as second option
+  try {
+    console.log('Trying uguu.se...');
+    const formData = new FormData();
+    formData.append('files[]', file);
+
+    const response = await fetch('https://uguu.se/upload', {
+      method: 'POST',
+      body: formData
+    });
+
+    console.log('uguu.se response status:', response.status);
+
+    if (response.ok) {
+      const data = await response.json();
+      console.log('uguu.se response:', data);
+
+      if (data.success && data.files && data.files[0] && data.files[0].url) {
+        const url = data.files[0].url;
+        console.log('✓ uguu.se URL:', url);
+        return url;
+      }
+    }
+  } catch (error) {
+    console.error('uguu.se error:', error);
+  }
+
+  // Try 0x0.st as final fallback
+  try {
+    console.log('Trying 0x0.st...');
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch('https://0x0.st', {
+      method: 'POST',
+      body: formData
+    });
+
+    console.log('0x0.st response status:', response.status);
+
+    if (response.ok) {
+      const url = await response.text();
+      console.log('✓ 0x0.st URL:', url.trim());
+      if (url && url.startsWith('https://')) {
+        return url.trim();
+      }
+    }
+  } catch (error) {
+    console.error('0x0.st error:', error);
+  }
+
+  throw new Error('Failed to upload file to any hosting service');
 }
 
+// Create new Airtable record with ALL attachments in one record
+async function createAirtableRecord(filesArray) {
+  const url = `https://api.airtable.com/v0/${currentBase}/${encodeURIComponent(currentTable)}`;
+
+  const payload = {
+    fields: {
+      "Money Video": filesArray,  // Array of {url, filename} objects
+      "Status": "Todo"
+    }
+  };
+
+  console.log('Creating Airtable record...');
+  console.log('URL:', url);
+  console.log(`Attaching ${filesArray.length} files to one record`);
+  console.log('Payload:', JSON.stringify(payload, null, 2));
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  console.log('Airtable response status:', response.status);
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    console.error('Airtable error:', errorData);
+    throw new Error(`Airtable error: ${errorData.error?.message || response.statusText}`);
+  }
+
+  const result = await response.json();
+  console.log('✓ Airtable record created:', result.id);
+  return result;
+}
 
 // Helper functions
 function showStatus(message, type = 'info') {

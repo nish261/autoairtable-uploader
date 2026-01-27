@@ -4,12 +4,8 @@
   "version": "1.0.0",
   "description": "Bulk upload videos to Airtable and automatically match to records",
   "permissions": [
-    "storage",
-    "notifications"
+    "storage"
   ],
-  "background": {
-    "service_worker": "background.js"
-  },
   "host_permissions": [
     "https://catbox.moe/*",
     "https://uguu.se/*",
