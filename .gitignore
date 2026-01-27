@@ -1,0 +1,22 @@
+# API Keys and Secrets
+*.key
+*.env
+.env.*
+
+# Chrome Extension Storage
+*.ldb
+*.log
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Backup files
+*.backup
+*.bak
+
+# Node modules (if using build tools)
+node_modules/
