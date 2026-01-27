@@ -203,7 +203,23 @@ folderInput.addEventListener('change', (e) => {
     selectedFiles = selectedFiles.slice(0, 100);
     showStatus('⚠️ Limited to 100 files total', 'info');
   } else {
-    showStatus(`✓ Added ${validFiles.length} files from folder (${selectedFiles.length} total)`, 'success');
+    // Count unique folders
+    const folders = new Set();
+    for (const file of selectedFiles) {
+      if (file.webkitRelativePath) {
+        const parts = file.webkitRelativePath.split('/');
+        if (parts.length > 1) {
+          parts.pop();
+          folders.add(parts.join('/'));
+        }
+      }
+    }
+    const folderCount = folders.size;
+    if (folderCount > 1) {
+      showStatus(`✓ Selected ${folderCount} folders (${selectedFiles.length} files)`, 'success');
+    } else {
+      showStatus(`✓ Selected ${selectedFiles.length} files`, 'success');
+    }
   }
 
   displayFileList();
@@ -232,11 +248,44 @@ function displayFileList() {
     return;
   }
 
-  fileList.innerHTML = `<div style="margin-bottom: 6px; font-weight: 600;">${selectedFiles.length} file(s) selected:</div>` +
-    selectedFiles.slice(0, 10).map(file => `
+  // Group files by folder
+  const filesByFolder = new Map();
+  for (const file of selectedFiles) {
+    let folderPath = 'Individual files';
+    if (file.webkitRelativePath) {
+      const parts = file.webkitRelativePath.split('/');
+      if (parts.length > 1) {
+        parts.pop();
+        folderPath = parts[parts.length - 1]; // Show just the folder name, not full path
+      }
+    }
+    if (!filesByFolder.has(folderPath)) {
+      filesByFolder.set(folderPath, []);
+    }
+    filesByFolder.get(folderPath).push(file);
+  }
+
+  const folderCount = filesByFolder.size;
+  const header = folderCount > 1
+    ? `${folderCount} folders (${selectedFiles.length} files total)`
+    : `${selectedFiles.length} file(s) selected`;
+
+  let html = `<div style="margin-bottom: 6px; font-weight: 600;">${header}:</div>`;
+
+  // Show files grouped by folder
+  for (const [folderName, files] of filesByFolder) {
+    if (filesByFolder.size > 1) {
+      html += `<div style="color: #18bfff; font-size: 11px; margin-top: 8px; font-weight: 600;">📁 ${folderName} (${files.length} files)</div>`;
+    }
+    html += files.slice(0, 3).map(file => `
       <div class="file-item">${file.name}</div>
-    `).join('') +
-    (selectedFiles.length > 10 ? `<div class="file-item" style="color: #9ca3af;">... and ${selectedFiles.length - 10} more</div>` : '');
+    `).join('');
+    if (files.length > 3) {
+      html += `<div class="file-item" style="color: #9ca3af;">... and ${files.length - 3} more from this folder</div>`;
+    }
+  }
+
+  fileList.innerHTML = html;
 }
 
 // Upload process

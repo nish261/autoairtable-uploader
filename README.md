@@ -1,15 +1,16 @@
 # Airtable Video Uploader - Chrome Extension
 
-Bulk upload videos and images to Airtable. Select up to 100 files or entire folders and automatically create new Airtable records.
+Bulk upload videos and images to Airtable with smart folder grouping. Automatically creates 1 record per subfolder.
 
 ## Features
 
 - 🎬 Upload videos and images to Airtable
 - 📁 Select individual files OR entire folders
+- 📂 **Smart subfolder grouping**: 1 record per subfolder automatically
 - 🚀 Bulk upload up to 100 files at once
 - 💾 Auto-saves your settings (API key, Base ID, Table ID)
-- 📊 Real-time progress tracking
-- ⚡ Creates 1 new record per file automatically
+- 📊 Real-time progress tracking with folder counts
+- ⚡ Mix and match files and folders freely
 
 ## Installation
 
@@ -59,23 +60,45 @@ Bulk upload videos and images to Airtable. Select up to 100 files or entire fold
 
 ## Usage
 
-### Upload Individual Files
+### How It Works
+
+The extension **creates 1 record per subfolder**:
+- Master folder with 2 subfolders → **2 records created**
+- Each subfolder's files become attachments in that record
+- Individual files (no folder structure) → **1 record with all files**
+
+### Option 1: Upload Individual Files
 
 1. Click "📁 Select Files"
-2. Choose videos/images (can select multiple)
-3. Click "Upload Files & Create Records"
+2. Use Cmd/Ctrl+Click to select multiple files from anywhere
+3. Click "Upload All Files & Create Record"
+4. **Result**: 1 record with all selected files
 
-### Upload Entire Folder
+### Option 2: Upload Folders (Smart Grouping)
 
 1. Click "📂 Select Folder"
-2. Choose a folder containing videos/images
-3. Click "Upload Files & Create Records"
+2. Choose a folder (can contain subfolders)
+3. Click "Upload All Files & Create Record"
+
+**Example:**
+```
+master-folder/
+  post1/ (image1.png, image2.png)
+  post2/ (video1.mp4, video2.mp4)
+```
+**Result**:
+- Record 1: "post1" folder → 2 image attachments
+- Record 2: "post2" folder → 2 video attachments
+
+### Mix & Match
+
+You can click "Select Files" and "Select Folder" multiple times before uploading - files accumulate until you click upload!
 
 **The extension:**
 - Filters to only videos & images
 - Limits to 100 files max
-- Creates 1 new Airtable record per file
-- Sets the "Money Video" field to the uploaded file
+- Groups by subfolder automatically
+- Sets the "Money Video" field to the uploaded files
 - Sets the "Status" field to "Todo"
 
 ## Troubleshooting
@@ -89,39 +112,45 @@ Bulk upload videos and images to Airtable. Select up to 100 files or entire fold
 4. Look for detailed error messages in console
 
 Common errors:
-- `❌ Failed to upload to file.io` - Temporary file host is down
+- `❌ Failed to upload file to any hosting service` - All file hosts are down (rare)
 - `❌ Airtable error: ...` - Check your API key, Base ID, Table ID
 - File type not supported - Only videos and images are accepted
 
-### Folder Selection Not Working
+### Folder Grouping Not Working
 
-Make sure you're using Chrome (not Firefox/Safari). The folder selection uses `webkitdirectory` which works in Chrome/Edge.
+The extension uses `webkitRelativePath` to detect subfolders. Make sure:
+- You're using Chrome or Edge (not Firefox/Safari)
+- You're selecting a folder (not individual files) for grouping to work
+- The folder contains subfolders - flat folders create 1 record
 
 ### Files Upload But Don't Appear in Airtable
 
-Check console logs. Likely issues:
-- file.io might be down (temporary file host)
-- Airtable API rate limiting
+Check console logs (F12). Likely issues:
+- Airtable API rate limiting (wait a few seconds and try again)
 - Wrong Table ID or field names
+- Network connectivity issues
 
 ## Technical Details
 
 ### How It Works
 
-1. **File Selection**: You select videos/images
-2. **Upload to file.io**: Files are uploaded to temporary hosting (expires in 1 day)
-3. **Create Airtable Record**: Extension creates a new record with:
-   - "Money Video" field: Contains the uploaded file
+1. **File Selection**: You select videos/images (individual files or folders)
+2. **Smart Grouping**: Extension detects subfolders and groups files by parent folder
+3. **Upload to Temporary Host**: Files are uploaded to temporary hosting
+4. **Create Airtable Records**: Extension creates records:
+   - 1 record per subfolder (or 1 record for all individual files)
+   - "Money Video" field: Contains all files from that folder as attachments
    - "Status" field: Set to "Todo"
-4. **Airtable Downloads**: Airtable automatically downloads the file from file.io and stores it permanently
+5. **Airtable Downloads**: Airtable automatically downloads files and stores them permanently
 
-### File Hosts
+### File Hosts (with Auto-Fallback)
 
-Currently uses **file.io** for temporary hosting:
-- Free, no account needed
-- Files expire after 1 day
-- Airtable downloads them before expiration
-- 2GB file size limit
+Uses multiple hosts with automatic fallback:
+1. **catbox.moe** (primary) - Most reliable, permanent hosting
+2. **uguu.se** (backup) - 48-hour expiration
+3. **0x0.st** (fallback) - Simple file host
+
+All are free with no account needed. Airtable downloads files before expiration.
 
 ### Airtable Fields
 
@@ -141,32 +170,31 @@ If your table has different field names, modify `popup.js` line 320-329.
 
 ### Change Field Names
 
-Edit `popup.js` lines 320-329:
+Find the `createAirtableRecord` function in `popup.js` and modify:
 
 ```javascript
 const payload = {
   fields: {
-    "Your Field Name": [  // Change this
-      {
-        url: fileUrl,
-        filename: fileName
-      }
-    ],
-    "Your Status Field": "Your Value"  // Change this
+    "Money Video": filesArray,  // Change to your attachment field name
+    "Status": "Todo"            // Change to your field name and value
   }
 };
 ```
 
 ### Change File Types
 
-Edit `popup.js` lines 131-133 and 155-157:
+Find the file filtering code in `popup.js` and modify:
 
 ```javascript
-selectedFiles = selectedFiles.filter(file => {
+const validFiles = newFiles.filter(file => {
   return file.type.startsWith('video/') || file.type.startsWith('image/');
   // Add more types: || file.type.startsWith('audio/')
 });
 ```
+
+### Change Grouping Behavior
+
+To upload ALL files into 1 record (no subfolder grouping), find the upload button handler in `popup.js` and change Step 1 to not group by folder. See code comments for details.
 
 ## Privacy
 
