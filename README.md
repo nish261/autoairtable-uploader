@@ -11,6 +11,8 @@ Bulk upload videos and images to Airtable with smart folder grouping. Automatica
 - 💾 Auto-saves your settings (API key, Base ID, Table ID)
 - 📊 Real-time progress tracking with folder counts
 - ⚡ Mix and match files and folders freely
+- 🔔 **Background uploads**: Close popup and switch tabs - uploads continue!
+- 📬 Desktop notifications when upload completes
 
 ## Installation
 
@@ -107,12 +109,24 @@ You can click "Select Files" and "Select Folder" multiple times before uploading
 - Create 1 record per individually selected file
 - Create 1 record per subfolder from folder selections
 
+### Background Uploads (New!)
+
+**You can close the popup during upload!** The extension uses a background worker:
+1. Click "Upload All Files & Create Record"
+2. Files are prepared and sent to background worker
+3. **Close the popup if you want** - upload continues in background
+4. Switch tabs, browse other sites, do whatever
+5. Get a **desktop notification** when upload completes
+
+This is perfect for large batches - no need to keep the popup open!
+
 **The extension:**
 - Filters to only videos & images
 - Limits to 100 files max
 - Groups by subfolder automatically
 - Sets the "Money Video" field to the uploaded files
 - Sets the "Status" field to "Todo"
+- Runs in background - close popup anytime!
 
 ## Troubleshooting
 
