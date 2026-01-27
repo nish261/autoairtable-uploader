@@ -248,44 +248,58 @@ function displayFileList() {
     return;
   }
 
-  // Group files by folder
-  const filesByFolder = new Map();
-  for (const file of selectedFiles) {
-    let folderPath = 'Individual files';
-    if (file.webkitRelativePath) {
-      const parts = file.webkitRelativePath.split('/');
-      if (parts.length > 1) {
-        parts.pop();
-        folderPath = parts[parts.length - 1]; // Show just the folder name, not full path
+  // Detect if files are from folder selection or individual file selection
+  const hasFolderStructure = selectedFiles.some(file => file.webkitRelativePath);
+
+  if (hasFolderStructure) {
+    // FOLDER SELECTION: Group by folder
+    const filesByFolder = new Map();
+    for (const file of selectedFiles) {
+      let folderPath = 'root';
+      if (file.webkitRelativePath) {
+        const parts = file.webkitRelativePath.split('/');
+        if (parts.length > 1) {
+          parts.pop();
+          folderPath = parts[parts.length - 1]; // Show just the folder name
+        }
+      }
+      if (!filesByFolder.has(folderPath)) {
+        filesByFolder.set(folderPath, []);
+      }
+      filesByFolder.get(folderPath).push(file);
+    }
+
+    const folderCount = filesByFolder.size;
+    const header = `${folderCount} folder${folderCount > 1 ? 's' : ''} (${selectedFiles.length} files) → ${folderCount} records`;
+
+    let html = `<div style="margin-bottom: 6px; font-weight: 600;">${header}:</div>`;
+
+    // Show files grouped by folder
+    for (const [folderName, files] of filesByFolder) {
+      html += `<div style="color: #18bfff; font-size: 11px; margin-top: 8px; font-weight: 600;">📁 ${folderName} (${files.length} files)</div>`;
+      html += files.slice(0, 3).map(file => `
+        <div class="file-item">${file.name}</div>
+      `).join('');
+      if (files.length > 3) {
+        html += `<div class="file-item" style="color: #9ca3af;">... and ${files.length - 3} more</div>`;
       }
     }
-    if (!filesByFolder.has(folderPath)) {
-      filesByFolder.set(folderPath, []);
-    }
-    filesByFolder.get(folderPath).push(file);
-  }
 
-  const folderCount = filesByFolder.size;
-  const header = folderCount > 1
-    ? `${folderCount} folders (${selectedFiles.length} files total)`
-    : `${selectedFiles.length} file(s) selected`;
+    fileList.innerHTML = html;
+  } else {
+    // FILE SELECTION: Show individual files (each becomes 1 record)
+    const header = `${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''} → ${selectedFiles.length} records`;
 
-  let html = `<div style="margin-bottom: 6px; font-weight: 600;">${header}:</div>`;
-
-  // Show files grouped by folder
-  for (const [folderName, files] of filesByFolder) {
-    if (filesByFolder.size > 1) {
-      html += `<div style="color: #18bfff; font-size: 11px; margin-top: 8px; font-weight: 600;">📁 ${folderName} (${files.length} files)</div>`;
-    }
-    html += files.slice(0, 3).map(file => `
-      <div class="file-item">${file.name}</div>
+    let html = `<div style="margin-bottom: 6px; font-weight: 600;">${header}:</div>`;
+    html += selectedFiles.slice(0, 10).map(file => `
+      <div class="file-item">📄 ${file.name}</div>
     `).join('');
-    if (files.length > 3) {
-      html += `<div class="file-item" style="color: #9ca3af;">... and ${files.length - 3} more from this folder</div>`;
+    if (selectedFiles.length > 10) {
+      html += `<div class="file-item" style="color: #9ca3af;">... and ${selectedFiles.length - 10} more files</div>`;
     }
-  }
 
-  fileList.innerHTML = html;
+    fileList.innerHTML = html;
+  }
 }
 
 // Upload process
@@ -314,16 +328,21 @@ uploadBtn.addEventListener('click', async () => {
     const filesByFolder = new Map();
 
     for (const file of selectedFiles) {
-      // Get the parent folder from webkitRelativePath (for folder selection) or use 'root' for file selection
-      let folderPath = 'root';
+      let folderPath;
 
       if (file.webkitRelativePath) {
-        // Extract parent folder path (everything except the filename)
+        // FOLDER SELECTION: Extract parent folder path (everything except the filename)
+        // This groups files by subfolder -> 1 record per subfolder
         const parts = file.webkitRelativePath.split('/');
         if (parts.length > 1) {
           parts.pop(); // Remove filename
           folderPath = parts.join('/'); // Get parent folder path
+        } else {
+          folderPath = 'root';
         }
+      } else {
+        // FILE SELECTION: Each file gets its own unique path -> 1 record per file
+        folderPath = `file_${file.name}_${file.size}_${file.lastModified}`;
       }
 
       if (!filesByFolder.has(folderPath)) {
