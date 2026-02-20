@@ -491,46 +491,24 @@ uploadBtn.addEventListener('click', async () => {
   }
 });
 
-// Upload file to temporary hosting - catbox first (fastest), quick fallbacks
+// Upload file to catbox.moe (permanent storage, no expiry)
 async function uploadToTempHost(file) {
-  // Try catbox first - usually fastest
-  try {
-    const formData = new FormData();
-    formData.append('reqtype', 'fileupload');
-    formData.append('fileToUpload', file);
-    const response = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData });
-    if (response.ok) {
-      const url = await response.text();
-      if (url && url.startsWith('https://')) return url.trim();
-    }
-  } catch (e) { /* fallback */ }
+  const formData = new FormData();
+  formData.append('reqtype', 'fileupload');
+  formData.append('fileToUpload', file);
 
-  // Fallback: race uguu and 0x0
-  const uploadToUguu = async () => {
-    const formData = new FormData();
-    formData.append('files[]', file);
-    const response = await fetch('https://uguu.se/upload', { method: 'POST', body: formData });
-    if (!response.ok) throw new Error('uguu failed');
-    const data = await response.json();
-    if (data.success && data.files?.[0]?.url) return data.files[0].url;
-    throw new Error('uguu invalid');
-  };
+  const response = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData });
 
-  const uploadTo0x0 = async () => {
-    const formData = new FormData();
-    formData.append('file', file);
-    const response = await fetch('https://0x0.st', { method: 'POST', body: formData });
-    if (!response.ok) throw new Error('0x0 failed');
-    const url = await response.text();
-    if (url && url.startsWith('https://')) return url.trim();
-    throw new Error('0x0 invalid');
-  };
-
-  try {
-    return await Promise.any([uploadToUguu(), uploadTo0x0()]);
-  } catch (e) {
-    throw new Error('Failed to upload to any host');
+  if (!response.ok) {
+    throw new Error(`Upload failed: ${response.status}`);
   }
+
+  const url = await response.text();
+  if (url && url.startsWith('https://')) {
+    return url.trim();
+  }
+
+  throw new Error('Invalid URL from catbox');
 }
 
 // Create new Airtable record with ALL attachments in one record
