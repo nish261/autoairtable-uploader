@@ -318,6 +318,9 @@ uploadBtn.addEventListener('click', async () => {
   showStatus('⚠️ DO NOT CLOSE THIS POPUP - Upload in progress...', 'info');
   progressDiv.classList.add('active');
 
+  // Initialize progress display immediately
+  updateProgress(0, selectedFiles.length, 'Starting upload...');
+
   console.log('=== STARTING UPLOAD ===');
   console.log('Files to upload:', selectedFiles.length);
   console.log('Base:', currentBase);
@@ -371,9 +374,14 @@ uploadBtn.addEventListener('click', async () => {
     // Process files in parallel batches
     for (let i = 0; i < allFiles.length; i += CONCURRENT_UPLOADS) {
       const batch = allFiles.slice(i, i + CONCURRENT_UPLOADS);
+      const batchStart = i;
 
-      const batchPromises = batch.map(async ({ file, folderPath }) => {
-        console.log(`\n--- Uploading: ${file.name} ---`);
+      // Show progress for batch start
+      updateProgress(batchStart, allFiles.length, `Uploading batch ${Math.floor(i/CONCURRENT_UPLOADS)+1}...`);
+
+      const batchPromises = batch.map(async ({ file, folderPath }, idx) => {
+        const fileNum = batchStart + idx + 1;
+        console.log(`\n--- Uploading ${fileNum}/${allFiles.length}: ${file.name} ---`);
 
         try {
           const fileUrl = await uploadToTempHost(file);
@@ -385,22 +393,25 @@ uploadBtn.addEventListener('click', async () => {
           }
 
           console.log('✓ URL:', fileUrl);
+          // Update progress as each file completes
+          uploadedCount++;
+          updateProgress(uploadedCount, allFiles.length, `Uploaded ${file.name}`);
+
           return { folderPath, url: fileUrl, filename: file.name };
 
         } catch (error) {
           console.error(`❌ Error uploading ${file.name}:`, error);
           errors.push(`${file.name}: ${error.message}`);
+          uploadedCount++;
+          updateProgress(uploadedCount, allFiles.length, `Failed: ${file.name}`);
           return null;
         }
       });
 
       const results = await Promise.all(batchPromises);
 
-      // Process results
+      // Process results - add to folder groups
       for (const result of results) {
-        uploadedCount++;
-        updateProgress(uploadedCount, allFiles.length, `Uploaded ${uploadedCount}/${allFiles.length}`);
-
         if (result) {
           uploadedByFolder.get(result.folderPath).push({
             url: result.url,
