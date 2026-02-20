@@ -356,8 +356,8 @@ uploadBtn.addEventListener('click', async () => {
       console.log(`  - ${folder}: ${files.length} files`);
     }
 
-    // Step 2: Upload all files in PARALLEL (5 concurrent)
-    const CONCURRENT_UPLOADS = 5;
+    // Step 2: Upload all files in PARALLEL (10 concurrent)
+    const CONCURRENT_UPLOADS = 10;
     const uploadedByFolder = new Map();
     const errors = [];
     let uploadedCount = 0;
@@ -420,10 +420,6 @@ uploadBtn.addEventListener('click', async () => {
         }
       }
 
-      // Small delay between batches
-      if (i + CONCURRENT_UPLOADS < allFiles.length) {
-        await sleep(100);
-      }
     }
 
     // Step 3: Create records in BATCHES (Airtable allows 10 per request)
@@ -460,9 +456,6 @@ uploadBtn.addEventListener('click', async () => {
         }
       }
 
-      if (i + BATCH_SIZE < recordsToCreate.length) {
-        await sleep(100);
-      }
     }
 
     console.log('\n=== UPLOAD COMPLETE ===');
@@ -498,20 +491,21 @@ uploadBtn.addEventListener('click', async () => {
   }
 });
 
-// Upload file to temporary hosting - race all hosts for speed
+// Upload file to temporary hosting - catbox first (fastest), quick fallbacks
 async function uploadToTempHost(file) {
-  // Create upload promises for all hosts simultaneously
-  const uploadToCatbox = async () => {
+  // Try catbox first - usually fastest
+  try {
     const formData = new FormData();
     formData.append('reqtype', 'fileupload');
     formData.append('fileToUpload', file);
     const response = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData });
-    if (!response.ok) throw new Error('catbox failed');
-    const url = await response.text();
-    if (url && url.startsWith('https://')) return url.trim();
-    throw new Error('catbox invalid url');
-  };
+    if (response.ok) {
+      const url = await response.text();
+      if (url && url.startsWith('https://')) return url.trim();
+    }
+  } catch (e) { /* fallback */ }
 
+  // Fallback: race uguu and 0x0
   const uploadToUguu = async () => {
     const formData = new FormData();
     formData.append('files[]', file);
@@ -519,7 +513,7 @@ async function uploadToTempHost(file) {
     if (!response.ok) throw new Error('uguu failed');
     const data = await response.json();
     if (data.success && data.files?.[0]?.url) return data.files[0].url;
-    throw new Error('uguu invalid response');
+    throw new Error('uguu invalid');
   };
 
   const uploadTo0x0 = async () => {
@@ -529,15 +523,13 @@ async function uploadToTempHost(file) {
     if (!response.ok) throw new Error('0x0 failed');
     const url = await response.text();
     if (url && url.startsWith('https://')) return url.trim();
-    throw new Error('0x0 invalid url');
+    throw new Error('0x0 invalid');
   };
 
-  // Race all hosts - first success wins
   try {
-    const result = await Promise.any([uploadToCatbox(), uploadToUguu(), uploadTo0x0()]);
-    return result;
-  } catch (error) {
-    throw new Error('Failed to upload file to any hosting service');
+    return await Promise.any([uploadToUguu(), uploadTo0x0()]);
+  } catch (e) {
+    throw new Error('Failed to upload to any host');
   }
 }
 
