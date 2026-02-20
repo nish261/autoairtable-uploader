@@ -302,7 +302,38 @@ function displayFileList() {
   }
 }
 
-// Upload process
+// Check for pending upload on page load
+chrome.storage.local.get(['pendingUpload'], (result) => {
+  if (result.pendingUpload && result.pendingUpload.remaining.length > 0) {
+    const pending = result.pendingUpload;
+    showStatus(`⚠️ ${pending.remaining.length} folders pending from last session`, 'info');
+
+    // Create resume button
+    const resumeBtn = document.createElement('button');
+    resumeBtn.textContent = `Resume Upload (${pending.completed}/${pending.total} done)`;
+    resumeBtn.style.cssText = 'background:#f59e0b;color:white;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;margin-top:8px;width:100%;';
+    resumeBtn.onclick = async () => {
+      resumeBtn.remove();
+      // User needs to re-select the same folder to get File objects
+      showStatus('⚠️ Re-select the SAME folder to resume', 'info');
+    };
+
+    const clearPendingBtn = document.createElement('button');
+    clearPendingBtn.textContent = 'Clear & Start Fresh';
+    clearPendingBtn.style.cssText = 'background:#6b7280;color:white;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;margin-top:4px;width:100%;';
+    clearPendingBtn.onclick = () => {
+      chrome.storage.local.remove(['pendingUpload']);
+      resumeBtn.remove();
+      clearPendingBtn.remove();
+      showStatus('✓ Cleared. Ready for new upload.', 'success');
+    };
+
+    statusDiv.after(clearPendingBtn);
+    statusDiv.after(resumeBtn);
+  }
+});
+
+// Upload process - 3 folders at a time, create records immediately
 uploadBtn.addEventListener('click', async () => {
   if (selectedFiles.length === 0) {
     showStatus('Please select files first', 'error');
@@ -315,182 +346,127 @@ uploadBtn.addEventListener('click', async () => {
   }
 
   uploadBtn.disabled = true;
-  showStatus('⚠️ DO NOT CLOSE THIS POPUP - Upload in progress...', 'info');
   progressDiv.classList.add('active');
 
-  // Initialize progress display immediately
-  updateProgress(0, selectedFiles.length, 'Starting upload...');
+  // Group files by folder
+  const folderQueue = [];
+  const filesByFolder = new Map();
 
-  console.log('=== STARTING UPLOAD ===');
-  console.log('Files to upload:', selectedFiles.length);
-  console.log('Base:', currentBase);
-  console.log('Table:', currentTable);
-
-  try {
-    // Step 1: Group files by their parent folder
-    const filesByFolder = new Map();
-
-    for (const file of selectedFiles) {
-      let folderPath;
-
-      if (file.webkitRelativePath) {
-        const parts = file.webkitRelativePath.split('/');
-        if (parts.length > 1) {
-          parts.pop();
-          folderPath = parts.join('/');
-        } else {
-          folderPath = 'root';
-        }
+  for (const file of selectedFiles) {
+    let folderPath;
+    if (file.webkitRelativePath) {
+      const parts = file.webkitRelativePath.split('/');
+      if (parts.length > 1) {
+        parts.pop();
+        folderPath = parts.join('/');
       } else {
-        folderPath = `file_${file.name}_${file.size}_${file.lastModified}`;
+        folderPath = 'root';
       }
-
-      if (!filesByFolder.has(folderPath)) {
-        filesByFolder.set(folderPath, []);
-      }
-      filesByFolder.get(folderPath).push(file);
-    }
-
-    console.log(`\n📁 Found ${filesByFolder.size} folder(s) to create records for:`);
-    for (const [folder, files] of filesByFolder) {
-      console.log(`  - ${folder}: ${files.length} files`);
-    }
-
-    // Step 2: Upload all files in PARALLEL (3 concurrent - catbox rate limit safe)
-    const CONCURRENT_UPLOADS = 3;
-    const uploadedByFolder = new Map();
-    const errors = [];
-    let uploadedCount = 0;
-
-    // Flatten all files with their folder info
-    const allFiles = [];
-    for (const [folderPath, files] of filesByFolder) {
-      uploadedByFolder.set(folderPath, []);
-      for (const file of files) {
-        allFiles.push({ file, folderPath });
-      }
-    }
-
-    // Process files in parallel batches
-    for (let i = 0; i < allFiles.length; i += CONCURRENT_UPLOADS) {
-      const batch = allFiles.slice(i, i + CONCURRENT_UPLOADS);
-      const batchStart = i;
-
-      // Show progress for batch start
-      updateProgress(batchStart, allFiles.length, `Uploading batch ${Math.floor(i/CONCURRENT_UPLOADS)+1}...`);
-
-      const batchPromises = batch.map(async ({ file, folderPath }, idx) => {
-        const fileNum = batchStart + idx + 1;
-        console.log(`\n--- Uploading ${fileNum}/${allFiles.length}: ${file.name} ---`);
-
-        try {
-          const fileUrl = await uploadToTempHost(file);
-
-          if (!fileUrl) {
-            console.error(`❌ Failed to get URL for ${file.name}`);
-            errors.push(`${file.name}: Failed to upload to hosting`);
-            return null;
-          }
-
-          console.log('✓ URL:', fileUrl);
-          // Update progress as each file completes
-          uploadedCount++;
-          updateProgress(uploadedCount, allFiles.length, `Uploaded ${file.name}`);
-
-          return { folderPath, url: fileUrl, filename: file.name };
-
-        } catch (error) {
-          console.error(`❌ Error uploading ${file.name}:`, error);
-          errors.push(`${file.name}: ${error.message}`);
-          uploadedCount++;
-          updateProgress(uploadedCount, allFiles.length, `Failed: ${file.name}`);
-          return null;
-        }
-      });
-
-      const results = await Promise.all(batchPromises);
-
-      // Process results - add to folder groups
-      for (const result of results) {
-        if (result) {
-          uploadedByFolder.get(result.folderPath).push({
-            url: result.url,
-            filename: result.filename
-          });
-        }
-      }
-
-      // Small delay between batches to avoid rate limiting
-      await sleep(500);
-    }
-
-    // Step 3: Create records in BATCHES (Airtable allows 10 per request)
-    const BATCH_SIZE = 10;
-    let recordsCreated = 0;
-
-    // Collect all records to create
-    const recordsToCreate = [];
-    for (const [folderPath, uploadedFiles] of uploadedByFolder) {
-      if (uploadedFiles.length > 0) {
-        recordsToCreate.push({ folderPath, files: uploadedFiles });
-      }
-    }
-
-    // Process in batches of 10
-    for (let i = 0; i < recordsToCreate.length; i += BATCH_SIZE) {
-      const batch = recordsToCreate.slice(i, i + BATCH_SIZE);
-      updateProgress(allFiles.length, allFiles.length, `Creating records ${i+1}-${Math.min(i+BATCH_SIZE, recordsToCreate.length)}...`);
-
-      try {
-        const result = await createAirtableRecordsBatch(batch);
-        recordsCreated += result.records.length;
-        console.log(`✓ Batch created: ${result.records.length} records`);
-      } catch (error) {
-        console.error(`❌ Error creating batch:`, error);
-        // Fallback to individual creation
-        for (const record of batch) {
-          try {
-            await createAirtableRecord(record.files);
-            recordsCreated++;
-          } catch (e) {
-            errors.push(`Folder ${record.folderPath}: ${e.message}`);
-          }
-        }
-      }
-
-    }
-
-    console.log('\n=== UPLOAD COMPLETE ===');
-    console.log('Records created:', recordsCreated);
-    console.log('Files uploaded:', uploadedCount - errors.length);
-    console.log('Files failed:', errors.length);
-    if (errors.length > 0) {
-      console.log('Errors:', errors);
-    }
-
-    if (recordsCreated === 0) {
-      showStatus('❌ All uploads failed. Check console for details.', 'error');
-    } else if (errors.length > 0) {
-      showStatus(`⚠️ Done! ${recordsCreated} records created, ${errors.length} files failed.`, 'error');
     } else {
-      showStatus(`✓ Done! ${recordsCreated} records created with ${uploadedCount} files!`, 'success');
+      folderPath = `file_${file.name}_${file.size}_${file.lastModified}`;
     }
 
-    selectedFiles = [];
-    fileInput.value = '';
-    folderInput.value = '';
-    displayFileList();
-    clearBtn.style.display = 'none';
-
-  } catch (error) {
-    console.error('❌ Upload error:', error);
-    showStatus(`Error: ${error.message}`, 'error');
-  } finally {
-    uploadBtn.disabled = false;
-    setTimeout(() => {
-      progressDiv.classList.remove('active');
-    }, 5000);
+    if (!filesByFolder.has(folderPath)) {
+      filesByFolder.set(folderPath, []);
+    }
+    filesByFolder.get(folderPath).push(file);
   }
+
+  // Build queue
+  for (const [folderPath, files] of filesByFolder) {
+    folderQueue.push({ folderPath, files });
+  }
+
+  console.log(`=== STARTING UPLOAD: ${folderQueue.length} folders ===`);
+
+  const BATCH_SIZE = 3; // Process 3 folders at a time
+  const errors = [];
+  let completed = 0;
+  let recordsCreated = 0;
+  const total = folderQueue.length;
+
+  updateProgress(0, total, 'Starting...');
+  showStatus('⚠️ Uploading... (progress saved - can resume if closed)', 'info');
+
+  for (let i = 0; i < folderQueue.length; i += BATCH_SIZE) {
+    const batch = folderQueue.slice(i, i + BATCH_SIZE);
+
+    // Save remaining folders for resume (folder paths only)
+    const remaining = folderQueue.slice(i).map(f => f.folderPath);
+    chrome.storage.local.set({
+      pendingUpload: { remaining, completed, total }
+    });
+
+    // Process batch: upload files + create records immediately
+    const batchPromises = batch.map(async ({ folderPath, files }) => {
+      console.log(`\n📁 Processing: ${folderPath} (${files.length} files)`);
+
+      // Upload all files in this folder
+      const uploadedFiles = [];
+      for (const file of files) {
+        try {
+          const url = await uploadToTempHost(file);
+          if (url) {
+            uploadedFiles.push({ url, filename: file.name });
+            console.log(`  ✓ ${file.name}`);
+          }
+        } catch (error) {
+          console.error(`  ❌ ${file.name}: ${error.message}`);
+          errors.push(`${file.name}: ${error.message}`);
+        }
+      }
+
+      // Create Airtable record immediately
+      if (uploadedFiles.length > 0) {
+        try {
+          const result = await createAirtableRecord(uploadedFiles);
+          console.log(`  ✓ Record created: ${result.id}`);
+          return { success: true, folderPath };
+        } catch (error) {
+          console.error(`  ❌ Airtable: ${error.message}`);
+          errors.push(`${folderPath}: ${error.message}`);
+        }
+      }
+      return { success: false, folderPath };
+    });
+
+    const results = await Promise.all(batchPromises);
+
+    // Update progress
+    for (const result of results) {
+      completed++;
+      if (result.success) recordsCreated++;
+      updateProgress(completed, total, `${recordsCreated} records created`);
+    }
+
+    // Small delay between batches
+    if (i + BATCH_SIZE < folderQueue.length) {
+      await sleep(200);
+    }
+  }
+
+  // Clear pending on completion
+  chrome.storage.local.remove(['pendingUpload']);
+
+  console.log('\n=== COMPLETE ===');
+  console.log(`Records: ${recordsCreated}, Errors: ${errors.length}`);
+
+  if (recordsCreated === 0) {
+    showStatus('❌ All failed. Check console (F12).', 'error');
+  } else if (errors.length > 0) {
+    showStatus(`⚠️ Done! ${recordsCreated} records, ${errors.length} failed`, 'error');
+  } else {
+    showStatus(`✓ Done! ${recordsCreated} records created!`, 'success');
+  }
+
+  selectedFiles = [];
+  fileInput.value = '';
+  folderInput.value = '';
+  displayFileList();
+  clearBtn.style.display = 'none';
+  uploadBtn.disabled = false;
+
+  setTimeout(() => progressDiv.classList.remove('active'), 5000);
 });
 
 // Upload file to catbox.moe with retry (permanent storage, no expiry)
