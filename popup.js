@@ -379,7 +379,7 @@ uploadBtn.addEventListener('click', async () => {
 
   console.log(`=== STARTING UPLOAD: ${folderQueue.length} folders ===`);
 
-  const BATCH_SIZE = 3; // Process 3 folders at a time
+  const BATCH_SIZE = 5; // Process 5 folders at a time
   const errors = [];
   let completed = 0;
   let recordsCreated = 0;
@@ -401,19 +401,26 @@ uploadBtn.addEventListener('click', async () => {
     const batchPromises = batch.map(async ({ folderPath, files }) => {
       console.log(`\n📁 Processing: ${folderPath} (${files.length} files)`);
 
-      // Upload all files in this folder
+      // Upload files in parallel (2 at a time within folder)
       const uploadedFiles = [];
-      for (const file of files) {
-        try {
-          const url = await uploadToTempHost(file);
-          if (url) {
-            uploadedFiles.push({ url, filename: file.name });
-            console.log(`  ✓ ${file.name}`);
+      const PARALLEL_FILES = 2;
+
+      for (let j = 0; j < files.length; j += PARALLEL_FILES) {
+        const fileChunk = files.slice(j, j + PARALLEL_FILES);
+        const results = await Promise.all(fileChunk.map(async (file) => {
+          try {
+            const url = await uploadToTempHost(file);
+            if (url) {
+              console.log(`  ✓ ${file.name}`);
+              return { url, filename: file.name };
+            }
+          } catch (error) {
+            console.error(`  ❌ ${file.name}: ${error.message}`);
+            errors.push(`${file.name}: ${error.message}`);
           }
-        } catch (error) {
-          console.error(`  ❌ ${file.name}: ${error.message}`);
-          errors.push(`${file.name}: ${error.message}`);
-        }
+          return null;
+        }));
+        uploadedFiles.push(...results.filter(r => r !== null));
       }
 
       // Create Airtable record immediately
@@ -441,7 +448,7 @@ uploadBtn.addEventListener('click', async () => {
 
     // Small delay between batches
     if (i + BATCH_SIZE < folderQueue.length) {
-      await sleep(200);
+      await sleep(100);
     }
   }
 
@@ -470,7 +477,7 @@ uploadBtn.addEventListener('click', async () => {
 });
 
 // Upload file to catbox.moe with retry (permanent storage, no expiry)
-async function uploadToTempHost(file, retries = 3) {
+async function uploadToTempHost(file, retries = 2) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const formData = new FormData();
