@@ -375,9 +375,11 @@ uploadBtn.addEventListener('click', async () => {
   // Build queue
   for (const [folderPath, files] of filesByFolder) {
     folderQueue.push({ folderPath, files });
+    console.log(`Queue: ${folderPath} has ${files.length} files`);
   }
 
   console.log(`=== STARTING UPLOAD: ${folderQueue.length} folders ===`);
+  console.log('Full queue:', folderQueue.map(f => `${f.folderPath}: ${f.files.length} files`));
 
   const BATCH_SIZE = 5; // Process 5 folders at a time
   const errors = [];
@@ -426,6 +428,7 @@ uploadBtn.addEventListener('click', async () => {
       // Create Airtable record immediately
       if (uploadedFiles.length > 0) {
         try {
+          console.log(`  Creating record with ${uploadedFiles.length} files:`, uploadedFiles.map(f => f.filename));
           const result = await createAirtableRecord(uploadedFiles);
           console.log(`  ✓ Record created: ${result.id}`);
           return { success: true, folderPath };
