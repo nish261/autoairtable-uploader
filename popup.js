@@ -521,6 +521,10 @@ async function createAirtableRecord(filesArray) {
     }
   };
 
+  console.log('📤 SENDING TO AIRTABLE:');
+  console.log('URL:', url);
+  console.log('Payload:', JSON.stringify(payload, null, 2));
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -530,12 +534,17 @@ async function createAirtableRecord(filesArray) {
     body: JSON.stringify(payload)
   });
 
+  const responseData = await response.json();
+
+  console.log('📥 AIRTABLE RESPONSE:');
+  console.log('Status:', response.status);
+  console.log('Data:', JSON.stringify(responseData, null, 2));
+
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(`Airtable error: ${errorData.error?.message || response.statusText}`);
+    throw new Error(`Airtable error: ${responseData.error?.message || response.statusText}`);
   }
 
-  return await response.json();
+  return responseData;
 }
 
 // Create multiple Airtable records in one batch (up to 10)
