@@ -479,26 +479,26 @@ uploadBtn.addEventListener('click', async () => {
   setTimeout(() => progressDiv.classList.remove('active'), 5000);
 });
 
-// Upload file to 0x0.st (Airtable-friendly)
+// Upload file to catbox.moe (fast, permanent)
 async function uploadToTempHost(file, retries = 2) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('reqtype', 'fileupload');
+      formData.append('fileToUpload', file);
 
-      const response = await fetch('https://0x0.st', { method: 'POST', body: formData });
+      const response = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
 
       const url = await response.text();
-      if (url && url.startsWith('http')) {
-        console.log(`  Uploaded to 0x0.st: ${url.trim()}`);
+      if (url && url.startsWith('https://')) {
         return url.trim();
       }
 
-      throw new Error('Invalid response from 0x0.st');
+      throw new Error('Invalid response');
     } catch (error) {
       console.log(`Attempt ${attempt}/${retries} failed for ${file.name}: ${error.message}`);
       if (attempt < retries) {
