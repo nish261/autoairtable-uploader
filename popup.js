@@ -356,8 +356,8 @@ uploadBtn.addEventListener('click', async () => {
       console.log(`  - ${folder}: ${files.length} files`);
     }
 
-    // Step 2: Upload all files in PARALLEL (10 concurrent)
-    const CONCURRENT_UPLOADS = 10;
+    // Step 2: Upload all files in PARALLEL (3 concurrent - catbox rate limit safe)
+    const CONCURRENT_UPLOADS = 3;
     const uploadedByFolder = new Map();
     const errors = [];
     let uploadedCount = 0;
@@ -420,6 +420,8 @@ uploadBtn.addEventListener('click', async () => {
         }
       }
 
+      // Small delay between batches to avoid rate limiting
+      await sleep(500);
     }
 
     // Step 3: Create records in BATCHES (Airtable allows 10 per request)
@@ -491,24 +493,35 @@ uploadBtn.addEventListener('click', async () => {
   }
 });
 
-// Upload file to catbox.moe (permanent storage, no expiry)
-async function uploadToTempHost(file) {
-  const formData = new FormData();
-  formData.append('reqtype', 'fileupload');
-  formData.append('fileToUpload', file);
+// Upload file to catbox.moe with retry (permanent storage, no expiry)
+async function uploadToTempHost(file, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const formData = new FormData();
+      formData.append('reqtype', 'fileupload');
+      formData.append('fileToUpload', file);
 
-  const response = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData });
+      const response = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData });
 
-  if (!response.ok) {
-    throw new Error(`Upload failed: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const url = await response.text();
+      if (url && url.startsWith('https://')) {
+        return url.trim();
+      }
+
+      throw new Error('Invalid response');
+    } catch (error) {
+      console.log(`Attempt ${attempt}/${retries} failed for ${file.name}: ${error.message}`);
+      if (attempt < retries) {
+        await sleep(1000 * attempt); // Exponential backoff
+      } else {
+        throw new Error(`Failed after ${retries} attempts: ${error.message}`);
+      }
+    }
   }
-
-  const url = await response.text();
-  if (url && url.startsWith('https://')) {
-    return url.trim();
-  }
-
-  throw new Error('Invalid URL from catbox');
 }
 
 // Create new Airtable record with ALL attachments in one record
@@ -553,6 +566,7 @@ async function createAirtableRecordsBatch(recordsData) {
   };
 
   console.log(`Creating ${recordsData.length} records in batch...`);
+  console.log('Payload:', JSON.stringify(payload, null, 2));
 
   const response = await fetch(url, {
     method: 'POST',
