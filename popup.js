@@ -331,17 +331,14 @@ uploadBtn.addEventListener('click', async () => {
       let folderPath;
 
       if (file.webkitRelativePath) {
-        // FOLDER SELECTION: Extract parent folder path (everything except the filename)
-        // This groups files by subfolder -> 1 record per subfolder
         const parts = file.webkitRelativePath.split('/');
         if (parts.length > 1) {
-          parts.pop(); // Remove filename
-          folderPath = parts.join('/'); // Get parent folder path
+          parts.pop();
+          folderPath = parts.join('/');
         } else {
           folderPath = 'root';
         }
       } else {
-        // FILE SELECTION: Each file gets its own unique path -> 1 record per file
         folderPath = `file_${file.name}_${file.size}_${file.lastModified}`;
       }
 
@@ -356,19 +353,27 @@ uploadBtn.addEventListener('click', async () => {
       console.log(`  - ${folder}: ${files.length} files`);
     }
 
-    // Step 2: Upload all files and group by folder
+    // Step 2: Upload all files in PARALLEL (5 concurrent)
+    const CONCURRENT_UPLOADS = 5;
     const uploadedByFolder = new Map();
     const errors = [];
     let uploadedCount = 0;
 
+    // Flatten all files with their folder info
+    const allFiles = [];
     for (const [folderPath, files] of filesByFolder) {
       uploadedByFolder.set(folderPath, []);
+      for (const file of files) {
+        allFiles.push({ file, folderPath });
+      }
+    }
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        uploadedCount++;
-        console.log(`\n--- Uploading file ${uploadedCount}/${selectedFiles.length}: ${file.name} ---`);
-        updateProgress(uploadedCount, selectedFiles.length, `Uploading ${file.name}...`);
+    // Process files in parallel batches
+    for (let i = 0; i < allFiles.length; i += CONCURRENT_UPLOADS) {
+      const batch = allFiles.slice(i, i + CONCURRENT_UPLOADS);
+
+      const batchPromises = batch.map(async ({ file, folderPath }) => {
+        console.log(`\n--- Uploading: ${file.name} ---`);
 
         try {
           const fileUrl = await uploadToTempHost(file);
@@ -376,44 +381,76 @@ uploadBtn.addEventListener('click', async () => {
           if (!fileUrl) {
             console.error(`❌ Failed to get URL for ${file.name}`);
             errors.push(`${file.name}: Failed to upload to hosting`);
-            continue;
+            return null;
           }
 
           console.log('✓ URL:', fileUrl);
-          uploadedByFolder.get(folderPath).push({
-            url: fileUrl,
-            filename: file.name
-          });
+          return { folderPath, url: fileUrl, filename: file.name };
 
         } catch (error) {
           console.error(`❌ Error uploading ${file.name}:`, error);
           errors.push(`${file.name}: ${error.message}`);
+          return null;
         }
+      });
 
-        // Small delay to avoid rate limiting
-        await sleep(300);
+      const results = await Promise.all(batchPromises);
+
+      // Process results
+      for (const result of results) {
+        uploadedCount++;
+        updateProgress(uploadedCount, allFiles.length, `Uploaded ${uploadedCount}/${allFiles.length}`);
+
+        if (result) {
+          uploadedByFolder.get(result.folderPath).push({
+            url: result.url,
+            filename: result.filename
+          });
+        }
+      }
+
+      // Small delay between batches
+      if (i + CONCURRENT_UPLOADS < allFiles.length) {
+        await sleep(100);
       }
     }
 
-    // Step 3: Create ONE record per folder
+    // Step 3: Create records in BATCHES (Airtable allows 10 per request)
+    const BATCH_SIZE = 10;
     let recordsCreated = 0;
 
+    // Collect all records to create
+    const recordsToCreate = [];
     for (const [folderPath, uploadedFiles] of uploadedByFolder) {
       if (uploadedFiles.length > 0) {
-        console.log(`\n--- Creating Airtable record for folder: ${folderPath} (${uploadedFiles.length} files) ---`);
-        updateProgress(selectedFiles.length, selectedFiles.length, `Creating record for ${folderPath}...`);
+        recordsToCreate.push({ folderPath, files: uploadedFiles });
+      }
+    }
 
-        try {
-          const result = await createAirtableRecord(uploadedFiles);
-          console.log(`✓ Airtable record created: ${result.id}`);
-          recordsCreated++;
-        } catch (error) {
-          console.error(`❌ Error creating record for ${folderPath}:`, error);
-          errors.push(`Folder ${folderPath}: ${error.message}`);
+    // Process in batches of 10
+    for (let i = 0; i < recordsToCreate.length; i += BATCH_SIZE) {
+      const batch = recordsToCreate.slice(i, i + BATCH_SIZE);
+      updateProgress(allFiles.length, allFiles.length, `Creating records ${i+1}-${Math.min(i+BATCH_SIZE, recordsToCreate.length)}...`);
+
+      try {
+        const result = await createAirtableRecordsBatch(batch);
+        recordsCreated += result.records.length;
+        console.log(`✓ Batch created: ${result.records.length} records`);
+      } catch (error) {
+        console.error(`❌ Error creating batch:`, error);
+        // Fallback to individual creation
+        for (const record of batch) {
+          try {
+            await createAirtableRecord(record.files);
+            recordsCreated++;
+          } catch (e) {
+            errors.push(`Folder ${record.folderPath}: ${e.message}`);
+          }
         }
+      }
 
-        // Small delay between record creation
-        await sleep(300);
+      if (i + BATCH_SIZE < recordsToCreate.length) {
+        await sleep(100);
       }
     }
 
@@ -433,7 +470,6 @@ uploadBtn.addEventListener('click', async () => {
       showStatus(`✓ Done! ${recordsCreated} records created with ${uploadedCount} files!`, 'success');
     }
 
-    // Clear file selection
     selectedFiles = [];
     fileInput.value = '';
     folderInput.value = '';
@@ -451,87 +487,47 @@ uploadBtn.addEventListener('click', async () => {
   }
 });
 
-// Upload file to temporary hosting (direct approach with host_permissions)
+// Upload file to temporary hosting - race all hosts for speed
 async function uploadToTempHost(file) {
-  console.log('Starting upload, size:', file.size, 'bytes');
-
-  // Try catbox.moe first (most reliable)
-  try {
-    console.log('Trying catbox.moe...');
+  // Create upload promises for all hosts simultaneously
+  const uploadToCatbox = async () => {
     const formData = new FormData();
     formData.append('reqtype', 'fileupload');
     formData.append('fileToUpload', file);
+    const response = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData });
+    if (!response.ok) throw new Error('catbox failed');
+    const url = await response.text();
+    if (url && url.startsWith('https://')) return url.trim();
+    throw new Error('catbox invalid url');
+  };
 
-    const response = await fetch('https://catbox.moe/user/api.php', {
-      method: 'POST',
-      body: formData
-    });
-
-    console.log('catbox.moe response status:', response.status);
-
-    if (response.ok) {
-      const url = await response.text();
-      console.log('✓ catbox.moe URL:', url.trim());
-      if (url && url.startsWith('https://')) {
-        return url.trim();
-      }
-    }
-  } catch (error) {
-    console.error('catbox.moe error:', error);
-  }
-
-  // Try uguu.se as second option
-  try {
-    console.log('Trying uguu.se...');
+  const uploadToUguu = async () => {
     const formData = new FormData();
     formData.append('files[]', file);
+    const response = await fetch('https://uguu.se/upload', { method: 'POST', body: formData });
+    if (!response.ok) throw new Error('uguu failed');
+    const data = await response.json();
+    if (data.success && data.files?.[0]?.url) return data.files[0].url;
+    throw new Error('uguu invalid response');
+  };
 
-    const response = await fetch('https://uguu.se/upload', {
-      method: 'POST',
-      body: formData
-    });
-
-    console.log('uguu.se response status:', response.status);
-
-    if (response.ok) {
-      const data = await response.json();
-      console.log('uguu.se response:', data);
-
-      if (data.success && data.files && data.files[0] && data.files[0].url) {
-        const url = data.files[0].url;
-        console.log('✓ uguu.se URL:', url);
-        return url;
-      }
-    }
-  } catch (error) {
-    console.error('uguu.se error:', error);
-  }
-
-  // Try 0x0.st as final fallback
-  try {
-    console.log('Trying 0x0.st...');
+  const uploadTo0x0 = async () => {
     const formData = new FormData();
     formData.append('file', file);
+    const response = await fetch('https://0x0.st', { method: 'POST', body: formData });
+    if (!response.ok) throw new Error('0x0 failed');
+    const url = await response.text();
+    if (url && url.startsWith('https://')) return url.trim();
+    throw new Error('0x0 invalid url');
+  };
 
-    const response = await fetch('https://0x0.st', {
-      method: 'POST',
-      body: formData
-    });
-
-    console.log('0x0.st response status:', response.status);
-
-    if (response.ok) {
-      const url = await response.text();
-      console.log('✓ 0x0.st URL:', url.trim());
-      if (url && url.startsWith('https://')) {
-        return url.trim();
-      }
-    }
+  // Race all hosts - first success wins
+  try {
+    const result = await Promise.any([uploadToCatbox(), uploadToUguu(), uploadTo0x0()]);
+    return result;
   } catch (error) {
-    console.error('0x0.st error:', error);
+    throw new Error('Failed to upload file to any hosting service');
   }
-
-  throw new Error('Failed to upload file to any hosting service');
 }
 
 // Create new Airtable record with ALL attachments in one record
@@ -540,15 +536,10 @@ async function createAirtableRecord(filesArray) {
 
   const payload = {
     fields: {
-      "Money Video": filesArray,  // Array of {url, filename} objects
+      "Money Video": filesArray,
       "Status": "Todo"
     }
   };
-
-  console.log('Creating Airtable record...');
-  console.log('URL:', url);
-  console.log(`Attaching ${filesArray.length} files to one record`);
-  console.log('Payload:', JSON.stringify(payload, null, 2));
 
   const response = await fetch(url, {
     method: 'POST',
@@ -559,17 +550,44 @@ async function createAirtableRecord(filesArray) {
     body: JSON.stringify(payload)
   });
 
-  console.log('Airtable response status:', response.status);
-
   if (!response.ok) {
     const errorData = await response.json();
-    console.error('Airtable error:', errorData);
     throw new Error(`Airtable error: ${errorData.error?.message || response.statusText}`);
   }
 
-  const result = await response.json();
-  console.log('✓ Airtable record created:', result.id);
-  return result;
+  return await response.json();
+}
+
+// Create multiple Airtable records in one batch (up to 10)
+async function createAirtableRecordsBatch(recordsData) {
+  const url = `https://api.airtable.com/v0/${currentBase}/${encodeURIComponent(currentTable)}`;
+
+  const payload = {
+    records: recordsData.map(({ files }) => ({
+      fields: {
+        "Money Video": files,
+        "Status": "Todo"
+      }
+    }))
+  };
+
+  console.log(`Creating ${recordsData.length} records in batch...`);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(`Airtable batch error: ${errorData.error?.message || response.statusText}`);
+  }
+
+  return await response.json();
 }
 
 // Helper functions
