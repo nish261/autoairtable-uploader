@@ -265,6 +265,11 @@
       📌 Folder upload: 1 record per subfolder | File upload: 1 record per file
     </div>
 
+    <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer;">
+      <input type="checkbox" id="oneFileOneRecord" style="width: 16px; height: 16px;">
+      <span style="font-size: 13px;">Force 1 file = 1 record (even for folders)</span>
+    </label>
+
     <div class="file-input-wrapper">
       <input type="file" id="fileInput" accept="video/*,image/*" multiple>
       <label for="fileInput" class="file-input-label">

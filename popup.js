@@ -327,10 +327,15 @@ uploadBtn.addEventListener('click', async () => {
     // Step 1: Group files by their parent folder
     const filesByFolder = new Map();
 
+    const oneFileOneRecord = document.getElementById('oneFileOneRecord')?.checked || false;
+
     for (const file of selectedFiles) {
       let folderPath;
 
-      if (file.webkitRelativePath) {
+      if (oneFileOneRecord) {
+        // FORCE 1 FILE = 1 RECORD: Each file gets unique path
+        folderPath = `file_${file.name}_${file.size}_${file.lastModified}`;
+      } else if (file.webkitRelativePath) {
         // FOLDER SELECTION: Extract parent folder path (everything except the filename)
         // This groups files by subfolder -> 1 record per subfolder
         const parts = file.webkitRelativePath.split('/');
