@@ -302,38 +302,7 @@ function displayFileList() {
   }
 }
 
-// Check for pending upload on page load
-chrome.storage.local.get(['pendingUpload'], (result) => {
-  if (result.pendingUpload && result.pendingUpload.remaining.length > 0) {
-    const pending = result.pendingUpload;
-    showStatus(`⚠️ ${pending.remaining.length} folders pending from last session`, 'info');
-
-    // Create resume button
-    const resumeBtn = document.createElement('button');
-    resumeBtn.textContent = `Resume Upload (${pending.completed}/${pending.total} done)`;
-    resumeBtn.style.cssText = 'background:#f59e0b;color:white;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;margin-top:8px;width:100%;';
-    resumeBtn.onclick = async () => {
-      resumeBtn.remove();
-      // User needs to re-select the same folder to get File objects
-      showStatus('⚠️ Re-select the SAME folder to resume', 'info');
-    };
-
-    const clearPendingBtn = document.createElement('button');
-    clearPendingBtn.textContent = 'Clear & Start Fresh';
-    clearPendingBtn.style.cssText = 'background:#6b7280;color:white;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;margin-top:4px;width:100%;';
-    clearPendingBtn.onclick = () => {
-      chrome.storage.local.remove(['pendingUpload']);
-      resumeBtn.remove();
-      clearPendingBtn.remove();
-      showStatus('✓ Cleared. Ready for new upload.', 'success');
-    };
-
-    statusDiv.after(clearPendingBtn);
-    statusDiv.after(resumeBtn);
-  }
-});
-
-// Upload process - 3 folders at a time, create records immediately
+// Upload process
 uploadBtn.addEventListener('click', async () => {
   if (selectedFiles.length === 0) {
     showStatus('Please select files first', 'error');
@@ -346,168 +315,223 @@ uploadBtn.addEventListener('click', async () => {
   }
 
   uploadBtn.disabled = true;
+  showStatus('⚠️ DO NOT CLOSE THIS POPUP - Upload in progress...', 'info');
   progressDiv.classList.add('active');
 
-  // Group files by folder
-  const folderQueue = [];
-  const filesByFolder = new Map();
+  console.log('=== STARTING UPLOAD ===');
+  console.log('Files to upload:', selectedFiles.length);
+  console.log('Base:', currentBase);
+  console.log('Table:', currentTable);
 
-  for (const file of selectedFiles) {
-    let folderPath;
-    if (file.webkitRelativePath) {
-      const parts = file.webkitRelativePath.split('/');
-      if (parts.length > 1) {
-        parts.pop();
-        folderPath = parts.join('/');
-      } else {
-        folderPath = 'root';
-      }
-    } else {
-      folderPath = `file_${file.name}_${file.size}_${file.lastModified}`;
-    }
+  try {
+    // Step 1: Group files by their parent folder
+    const filesByFolder = new Map();
 
-    if (!filesByFolder.has(folderPath)) {
-      filesByFolder.set(folderPath, []);
-    }
-    filesByFolder.get(folderPath).push(file);
-  }
+    for (const file of selectedFiles) {
+      let folderPath;
 
-  // Build queue
-  for (const [folderPath, files] of filesByFolder) {
-    folderQueue.push({ folderPath, files });
-    console.log(`Queue: ${folderPath} has ${files.length} files`);
-  }
-
-  console.log(`=== STARTING UPLOAD: ${folderQueue.length} folders ===`);
-  console.log('Full queue:', folderQueue.map(f => `${f.folderPath}: ${f.files.length} files`));
-
-  const BATCH_SIZE = 5; // Process 5 folders at a time
-  const errors = [];
-  let completed = 0;
-  let recordsCreated = 0;
-  const total = folderQueue.length;
-
-  updateProgress(0, total, 'Starting...');
-  showStatus('⚠️ Uploading... (progress saved - can resume if closed)', 'info');
-
-  for (let i = 0; i < folderQueue.length; i += BATCH_SIZE) {
-    const batch = folderQueue.slice(i, i + BATCH_SIZE);
-
-    // Save remaining folders for resume (folder paths only)
-    const remaining = folderQueue.slice(i).map(f => f.folderPath);
-    chrome.storage.local.set({
-      pendingUpload: { remaining, completed, total }
-    });
-
-    // Process batch: upload files + create records immediately
-    const batchPromises = batch.map(async ({ folderPath, files }) => {
-      console.log(`\n📁 Processing: ${folderPath} (${files.length} files)`);
-
-      // Upload files in parallel (2 at a time within folder)
-      const uploadedFiles = [];
-      const PARALLEL_FILES = 2;
-
-      for (let j = 0; j < files.length; j += PARALLEL_FILES) {
-        const fileChunk = files.slice(j, j + PARALLEL_FILES);
-        const results = await Promise.all(fileChunk.map(async (file) => {
-          try {
-            const url = await uploadToTempHost(file);
-            if (url) {
-              console.log(`  ✓ ${file.name}`);
-              return { url, filename: file.name };
-            }
-          } catch (error) {
-            console.error(`  ❌ ${file.name}: ${error.message}`);
-            errors.push(`${file.name}: ${error.message}`);
-          }
-          return null;
-        }));
-        uploadedFiles.push(...results.filter(r => r !== null));
-      }
-
-      // Create Airtable record immediately
-      if (uploadedFiles.length > 0) {
-        try {
-          console.log(`  Creating record with ${uploadedFiles.length} files:`, uploadedFiles.map(f => f.filename));
-          const result = await createAirtableRecord(uploadedFiles);
-          console.log(`  ✓ Record created: ${result.id}`);
-          return { success: true, folderPath };
-        } catch (error) {
-          console.error(`  ❌ Airtable: ${error.message}`);
-          errors.push(`${folderPath}: ${error.message}`);
+      if (file.webkitRelativePath) {
+        // FOLDER SELECTION: Extract parent folder path (everything except the filename)
+        // This groups files by subfolder -> 1 record per subfolder
+        const parts = file.webkitRelativePath.split('/');
+        if (parts.length > 1) {
+          parts.pop(); // Remove filename
+          folderPath = parts.join('/'); // Get parent folder path
+        } else {
+          folderPath = 'root';
         }
+      } else {
+        // FILE SELECTION: Each file gets its own unique path -> 1 record per file
+        folderPath = `file_${file.name}_${file.size}_${file.lastModified}`;
       }
-      return { success: false, folderPath };
-    });
 
-    const results = await Promise.all(batchPromises);
-
-    // Update progress
-    for (const result of results) {
-      completed++;
-      if (result.success) recordsCreated++;
-      updateProgress(completed, total, `${recordsCreated} records created`);
+      if (!filesByFolder.has(folderPath)) {
+        filesByFolder.set(folderPath, []);
+      }
+      filesByFolder.get(folderPath).push(file);
     }
 
-    // Small delay between batches
-    if (i + BATCH_SIZE < folderQueue.length) {
-      await sleep(100);
+    console.log(`\n📁 Found ${filesByFolder.size} folder(s) to create records for:`);
+    for (const [folder, files] of filesByFolder) {
+      console.log(`  - ${folder}: ${files.length} files`);
     }
+
+    // Step 2: Upload all files and group by folder
+    const uploadedByFolder = new Map();
+    const errors = [];
+    let uploadedCount = 0;
+
+    for (const [folderPath, files] of filesByFolder) {
+      uploadedByFolder.set(folderPath, []);
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        uploadedCount++;
+        console.log(`\n--- Uploading file ${uploadedCount}/${selectedFiles.length}: ${file.name} ---`);
+        updateProgress(uploadedCount, selectedFiles.length, `Uploading ${file.name}...`);
+
+        try {
+          const fileUrl = await uploadToTempHost(file);
+
+          if (!fileUrl) {
+            console.error(`❌ Failed to get URL for ${file.name}`);
+            errors.push(`${file.name}: Failed to upload to hosting`);
+            continue;
+          }
+
+          console.log('✓ URL:', fileUrl);
+          uploadedByFolder.get(folderPath).push({
+            url: fileUrl,
+            filename: file.name
+          });
+
+        } catch (error) {
+          console.error(`❌ Error uploading ${file.name}:`, error);
+          errors.push(`${file.name}: ${error.message}`);
+        }
+
+        // Small delay to avoid rate limiting
+        await sleep(300);
+      }
+    }
+
+    // Step 3: Create ONE record per folder
+    let recordsCreated = 0;
+
+    for (const [folderPath, uploadedFiles] of uploadedByFolder) {
+      if (uploadedFiles.length > 0) {
+        console.log(`\n--- Creating Airtable record for folder: ${folderPath} (${uploadedFiles.length} files) ---`);
+        updateProgress(selectedFiles.length, selectedFiles.length, `Creating record for ${folderPath}...`);
+
+        try {
+          const result = await createAirtableRecord(uploadedFiles);
+          console.log(`✓ Airtable record created: ${result.id}`);
+          recordsCreated++;
+        } catch (error) {
+          console.error(`❌ Error creating record for ${folderPath}:`, error);
+          errors.push(`Folder ${folderPath}: ${error.message}`);
+        }
+
+        // Small delay between record creation
+        await sleep(300);
+      }
+    }
+
+    console.log('\n=== UPLOAD COMPLETE ===');
+    console.log('Records created:', recordsCreated);
+    console.log('Files uploaded:', uploadedCount - errors.length);
+    console.log('Files failed:', errors.length);
+    if (errors.length > 0) {
+      console.log('Errors:', errors);
+    }
+
+    if (recordsCreated === 0) {
+      showStatus('❌ All uploads failed. Check console for details.', 'error');
+    } else if (errors.length > 0) {
+      showStatus(`⚠️ Done! ${recordsCreated} records created, ${errors.length} files failed.`, 'error');
+    } else {
+      showStatus(`✓ Done! ${recordsCreated} records created with ${uploadedCount} files!`, 'success');
+    }
+
+    // Clear file selection
+    selectedFiles = [];
+    fileInput.value = '';
+    folderInput.value = '';
+    displayFileList();
+    clearBtn.style.display = 'none';
+
+  } catch (error) {
+    console.error('❌ Upload error:', error);
+    showStatus(`Error: ${error.message}`, 'error');
+  } finally {
+    uploadBtn.disabled = false;
+    setTimeout(() => {
+      progressDiv.classList.remove('active');
+    }, 5000);
   }
-
-  // Clear pending on completion
-  chrome.storage.local.remove(['pendingUpload']);
-
-  console.log('\n=== COMPLETE ===');
-  console.log(`Records: ${recordsCreated}, Errors: ${errors.length}`);
-
-  if (recordsCreated === 0) {
-    showStatus('❌ All failed. Check console (F12).', 'error');
-  } else if (errors.length > 0) {
-    showStatus(`⚠️ Done! ${recordsCreated} records, ${errors.length} failed`, 'error');
-  } else {
-    showStatus(`✓ Done! ${recordsCreated} records created!`, 'success');
-  }
-
-  selectedFiles = [];
-  fileInput.value = '';
-  folderInput.value = '';
-  displayFileList();
-  clearBtn.style.display = 'none';
-  uploadBtn.disabled = false;
-
-  setTimeout(() => progressDiv.classList.remove('active'), 5000);
 });
 
-// Upload file to catbox.moe (fast, permanent)
-async function uploadToTempHost(file, retries = 2) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const formData = new FormData();
-      formData.append('reqtype', 'fileupload');
-      formData.append('fileToUpload', file);
+// Upload file to temporary hosting (direct approach with host_permissions)
+async function uploadToTempHost(file) {
+  console.log('Starting upload, size:', file.size, 'bytes');
 
-      const response = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: formData });
+  // Try catbox.moe first (most reliable)
+  try {
+    console.log('Trying catbox.moe...');
+    const formData = new FormData();
+    formData.append('reqtype', 'fileupload');
+    formData.append('fileToUpload', file);
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+    const response = await fetch('https://catbox.moe/user/api.php', {
+      method: 'POST',
+      body: formData
+    });
 
+    console.log('catbox.moe response status:', response.status);
+
+    if (response.ok) {
       const url = await response.text();
+      console.log('✓ catbox.moe URL:', url.trim());
       if (url && url.startsWith('https://')) {
         return url.trim();
       }
+    }
+  } catch (error) {
+    console.error('catbox.moe error:', error);
+  }
 
-      throw new Error('Invalid response');
-    } catch (error) {
-      console.log(`Attempt ${attempt}/${retries} failed for ${file.name}: ${error.message}`);
-      if (attempt < retries) {
-        await sleep(1000 * attempt);
-      } else {
-        throw new Error(`Failed after ${retries} attempts: ${error.message}`);
+  // Try uguu.se as second option
+  try {
+    console.log('Trying uguu.se...');
+    const formData = new FormData();
+    formData.append('files[]', file);
+
+    const response = await fetch('https://uguu.se/upload', {
+      method: 'POST',
+      body: formData
+    });
+
+    console.log('uguu.se response status:', response.status);
+
+    if (response.ok) {
+      const data = await response.json();
+      console.log('uguu.se response:', data);
+
+      if (data.success && data.files && data.files[0] && data.files[0].url) {
+        const url = data.files[0].url;
+        console.log('✓ uguu.se URL:', url);
+        return url;
       }
     }
+  } catch (error) {
+    console.error('uguu.se error:', error);
   }
+
+  // Try 0x0.st as final fallback
+  try {
+    console.log('Trying 0x0.st...');
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch('https://0x0.st', {
+      method: 'POST',
+      body: formData
+    });
+
+    console.log('0x0.st response status:', response.status);
+
+    if (response.ok) {
+      const url = await response.text();
+      console.log('✓ 0x0.st URL:', url.trim());
+      if (url && url.startsWith('https://')) {
+        return url.trim();
+      }
+    }
+  } catch (error) {
+    console.error('0x0.st error:', error);
+  }
+
+  throw new Error('Failed to upload file to any hosting service');
 }
 
 // Create new Airtable record with ALL attachments in one record
@@ -516,13 +540,14 @@ async function createAirtableRecord(filesArray) {
 
   const payload = {
     fields: {
-      "Money Video": filesArray,
+      "Money Video": filesArray,  // Array of {url, filename} objects
       "Status": "Todo"
     }
   };
 
-  console.log('📤 SENDING TO AIRTABLE:');
+  console.log('Creating Airtable record...');
   console.log('URL:', url);
+  console.log(`Attaching ${filesArray.length} files to one record`);
   console.log('Payload:', JSON.stringify(payload, null, 2));
 
   const response = await fetch(url, {
@@ -534,50 +559,17 @@ async function createAirtableRecord(filesArray) {
     body: JSON.stringify(payload)
   });
 
-  const responseData = await response.json();
-
-  console.log('📥 AIRTABLE RESPONSE:');
-  console.log('Status:', response.status);
-  console.log('Data:', JSON.stringify(responseData, null, 2));
-
-  if (!response.ok) {
-    throw new Error(`Airtable error: ${responseData.error?.message || response.statusText}`);
-  }
-
-  return responseData;
-}
-
-// Create multiple Airtable records in one batch (up to 10)
-async function createAirtableRecordsBatch(recordsData) {
-  const url = `https://api.airtable.com/v0/${currentBase}/${encodeURIComponent(currentTable)}`;
-
-  const payload = {
-    records: recordsData.map(({ files }) => ({
-      fields: {
-        "Money Video": files,
-        "Status": "Todo"
-      }
-    }))
-  };
-
-  console.log(`Creating ${recordsData.length} records in batch...`);
-  console.log('Payload:', JSON.stringify(payload, null, 2));
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
+  console.log('Airtable response status:', response.status);
 
   if (!response.ok) {
     const errorData = await response.json();
-    throw new Error(`Airtable batch error: ${errorData.error?.message || response.statusText}`);
+    console.error('Airtable error:', errorData);
+    throw new Error(`Airtable error: ${errorData.error?.message || response.statusText}`);
   }
 
-  return await response.json();
+  const result = await response.json();
+  console.log('✓ Airtable record created:', result.id);
+  return result;
 }
 
 // Helper functions
